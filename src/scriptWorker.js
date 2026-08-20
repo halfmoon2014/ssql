@@ -2,6 +2,8 @@ const vm = require("vm");
 const { parentPort, workerData } = require("worker_threads");
 
 const pending = new Map();
+const timers = new Map();
+let nextTimerId = 1;
 
 function safeConsole() {
   // 沙箱内 console 输出转成消息，避免直接操作主进程 stdout。
@@ -11,13 +13,46 @@ function safeConsole() {
   };
 }
 
-function callApi(path, params = {}) {
+function callApiRequest(method, path, params = {}) {
   // 脚本内 callApi 通过 parentPort 请求主线程执行，结果再按 id 回填 Promise。
   return new Promise((resolve, reject) => {
     const id = `${Date.now()}-${Math.random()}`;
     pending.set(id, { resolve, reject });
-    parentPort.postMessage({ type: "callApi", id, path, params });
+    parentPort.postMessage({ type: "callApi", id, path, params, options: { method } });
   });
+}
+
+const callApi = Object.freeze({
+  get: (path, params = {}) => callApiRequest("GET", path, params),
+  post: (path, params = {}) => callApiRequest("POST", path, params)
+});
+
+function safeSetTimeout(callback, delay = 0, ...args) {
+  // 只暴露定时器能力，不暴露 Node 的 Timer 对象；外层 Worker 超时仍会终止长时间脚本。
+  if (typeof callback !== "function") {
+    throw new TypeError("setTimeout callback must be function");
+  }
+  const id = nextTimerId;
+  nextTimerId += 1;
+  const timeoutMs = Math.max(0, Number(delay) || 0);
+  const timer = setTimeout(() => {
+    timers.delete(id);
+    callback(...args);
+  }, timeoutMs);
+  timers.set(id, timer);
+  return id;
+}
+
+function safeClearTimeout(id) {
+  const timer = timers.get(id);
+  if (!timer) return;
+  clearTimeout(timer);
+  timers.delete(id);
+}
+
+function clearAllTimers() {
+  for (const timer of timers.values()) clearTimeout(timer);
+  timers.clear();
 }
 
 parentPort.on("message", (message) => {
@@ -43,6 +78,8 @@ async function run() {
     resultSets,
     context,
     callApi,
+    setTimeout: safeSetTimeout,
+    clearTimeout: safeClearTimeout,
     console: safeConsole()
   };
 
@@ -71,10 +108,12 @@ async function run() {
     displayErrors: false
   });
   const finalResult = await result;
+  clearAllTimers();
   parentPort.postMessage({ type: "result", result: finalResult });
 }
 
 run().catch((error) => {
+  clearAllTimers();
   parentPort.postMessage({
     type: "error",
     error: error.message || "script execute failed"

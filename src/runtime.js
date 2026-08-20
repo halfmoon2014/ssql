@@ -4,6 +4,7 @@ const path = require("path");
 const { AppError } = require("./errors");
 const { executeSqlWithFields, prepareSqlExecution, resolveDatabaseSource } = require("./sqlExecutor");
 const { runScript } = require("./scriptRunner");
+const { formatChinaFileTime, formatChinaTime } = require("./time");
 
 function buildParams(requestParams, inputParams) {
   // 根据接口定义补默认值并校验必填项，输出结果供 SQL 和脚本共用。
@@ -35,7 +36,7 @@ function writeApiDebugFile(config, payload) {
   // 每次 API 请求输出一份调试快照，便于复盘入参、SQL 渲染和脚本内容。
   const dir = path.join(config.dataDir, "api-debug");
   ensureDir(dir);
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const timestamp = formatChinaFileTime();
   const filename = `${timestamp}-${safeFilePart(payload.requestId)}.json`;
   fs.writeFileSync(path.join(dir, filename), `${JSON.stringify(payload, null, 2)}\n`);
 }
@@ -71,6 +72,12 @@ function applyParamScriptResult(result, currentParams) {
   };
 }
 
+function normalizeCallApiMethod(options) {
+  const raw = typeof options === "string" ? options : options && typeof options === "object" ? options.method : "";
+  const method = String(raw || "").trim().toUpperCase();
+  return method || null;
+}
+
 class ApiRuntime {
   constructor({ store, config }) {
     this.store = store;
@@ -87,6 +94,21 @@ class ApiRuntime {
     const api = await this.store.findByPathAndMethod(apiPath, method);
     if (!api) throw new AppError(404, "api not found");
     return this.executeApi(api, options);
+  }
+
+  async executeCallApi(apiPath, params, callOptions, runtimeOptions) {
+    const requestedMethod = normalizeCallApiMethod(callOptions);
+    if (requestedMethod) {
+      return this.executeByPath(apiPath, requestedMethod, runtimeOptions).then((response) => response.data);
+    }
+
+    try {
+      return await this.executeByPath(apiPath, "POST", runtimeOptions).then((response) => response.data);
+    } catch (error) {
+      // 未显式传 method 的内部调用兜底：先按历史 POST 查找，再尝试常见 GET。
+      if (error.statusCode !== 404) throw error;
+      return this.executeByPath(apiPath, "GET", runtimeOptions).then((response) => response.data);
+    }
   }
 
   async runParamScript(api, params, options = {}) {
@@ -118,8 +140,8 @@ class ApiRuntime {
       },
       timeoutMs: api.scriptTimeoutMs || this.config.scriptTimeoutMs,
       maxCallDepth: this.config.maxCallDepth,
-      callApi: async (apiPath, callParams) => {
-        return this.executeByPath(apiPath, "POST", {
+      callApi: async (apiPath, callParams, callOptions) => {
+        return this.executeCallApi(apiPath, callParams, callOptions, {
           params: callParams,
           headers: options.headers || {},
           requestId: randomUUID(),
@@ -128,7 +150,7 @@ class ApiRuntime {
           allowDraft,
           userId: options.userId,
           roles: options.roles || []
-        }).then((response) => response.data);
+        });
       }
     });
 
@@ -246,9 +268,9 @@ class ApiRuntime {
         },
         timeoutMs: api.scriptTimeoutMs || this.config.scriptTimeoutMs,
         maxCallDepth: this.config.maxCallDepth,
-        callApi: async (apiPath, callParams) => {
+        callApi: async (apiPath, callParams, callOptions) => {
           // 脚本内 callApi 会再次进入 runtime，并继承调用链用于防环和日志追踪。
-          return this.executeByPath(apiPath, "POST", {
+          return this.executeCallApi(apiPath, callParams, callOptions, {
             params: callParams,
             headers: options.headers || {},
             requestId: randomUUID(),
@@ -257,7 +279,7 @@ class ApiRuntime {
             allowDraft,
             userId: options.userId,
             roles: options.roles || []
-          }).then((response) => response.data);
+          });
         }
       });
 
@@ -297,7 +319,7 @@ class ApiRuntime {
       const payload = {
         requestId,
         parentRequestId,
-        createdAt: new Date().toISOString(),
+        createdAt: formatChinaTime(),
         durationMs: Date.now() - startedAt,
         api: debug.api,
         callChain: debug.callChain,
@@ -337,5 +359,6 @@ class ApiRuntime {
 module.exports = {
   ApiRuntime,
   buildParams,
-  applyParamScriptResult
+  applyParamScriptResult,
+  normalizeCallApiMethod
 };

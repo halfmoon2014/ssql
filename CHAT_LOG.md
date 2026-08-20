@@ -382,3 +382,133 @@
   - `for file in src/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
   - `npm test` 通过。
   - 本机 `HEAD /`、`HEAD /style.css`、`HEAD /app.js` 返回 `200 OK`。
+
+### data 目录文件性质
+
+- 用户询问 `data/` 下是否都是临时文件。
+- 检查到 `data/server.log` 是服务运行日志，`data/api-debug/*.json` 是每次动态 API 执行的调试快照，可按需清理。
+- `data/apis.json` 是旧版本 API 配置文件，当前启动迁移逻辑会在 MySQL 表为空时读取它迁移到数据库，不建议随手删除。
+- `data/logs.json` 是旧版本调用日志遗留文件，当前代码未继续写入。
+- `data/.gitkeep` 用于保留空目录。
+
+### 修复 data 删除后 server.log 写入失败
+
+- 用户反馈 `Error: ENOENT: no such file or directory, open '/home/unixname/ssql/data/server.log'`。
+- 原因是 `data/` 被清理后，`Logger.write()` 直接 `appendFileSync(data/server.log)`，没有重新创建目录。
+- 已调整 `src/logger.js`，构造 Logger 时创建 `data/`，每次写日志前也重新确保 `data/` 存在。
+- 已新增 `test/logger.test.js`，覆盖运行中删除 `data/` 后日志写入会自动恢复目录和 `server.log`。
+- 验证：
+  - `for file in src/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+  - 已创建回当前缺失的 `data/` 目录。
+  - 使用 `PORT=3014 npm run dev` 启动新代码成功，`GET/HEAD /` 返回 `200 OK`，并自动写入新的 `data/server.log`。
+
+### JS 使用外部 API 和文件上传方案
+
+- 用户希望 JS 处理中可以使用外部 API 接口和文件上传服务，先给方案。
+- 建议不直接在沙箱中开放 `http`、`https`、`fs`、`Buffer` 等能力，而是注入受控函数，例如 `callHttp()`、`uploadFile()`。
+- 外部 API 通过白名单域名、方法、超时、大小限制、敏感 header 过滤和请求日志控制。
+- 文件上传建议走独立上传服务，脚本只拿 `fileId`、临时上传 URL 或 base64 小文件内容，由主线程完成上传并返回文件元数据。
+
+### 降级处理 client request timeout 日志
+
+- 用户贴出 `client error` 日志，错误为 `ERR_HTTP_REQUEST_TIMEOUT: Request timeout`。
+- 该错误来自 Node HTTP Server 的 `clientError` 事件，通常是客户端或 Nginx 连接建立后请求未按时完整发送，不代表动态 API 业务执行失败。
+- 已调整 `src/server.js`：`ERR_HTTP_REQUEST_TIMEOUT` 记录为 `info` 级别 `client request timeout`，并返回原始 HTTP `408 Request Timeout`。
+- 已调整 `ECONNRESET` 为 `info` 级别连接重置日志；其它解析错误仍按 `client error` 记录，并返回 `400` 或 `431`。
+- 已调整 `src/logger.js`，错误日志中补充 `error.code`，便于后续定位。
+- 验证：
+  - `for file in src/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+  - 已停止之前用于验证的 `3014` 进程；当前仍有 `3010` 和 `3012` 监听，未主动修改。
+
+### 日志时间改为中国时区
+
+- 用户反馈日志时间有问题，要求采用中国时区。
+- 原因是 `server.log`、API 调试快照和调用记录使用 `new Date().toISOString()`，该格式输出 UTC 时间。
+- 已新增 `src/time.js`，统一输出 UTC+08:00 时间，格式如 `2026-08-20T11:22:54.804+08:00`。
+- 已调整 `src/logger.js` 的 `time` 字段、`src/runtime.js` 的调试快照 `createdAt` 和文件名时间、`src/store.js` 的新写入时间。
+- 已新增 `test/time.test.js` 覆盖中国时区格式和文件名格式。
+- 验证：
+  - `for file in src/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+  - 使用 `PORT=3015 npm run dev` 临时启动新代码，`data/server.log` 新增记录为 `2026-08-20T11:30:23.574+08:00`。
+  - 临时 `3015` 已停止，当前只剩旧 `3012` 监听，需要重启 `3012` 后新时间格式生效。
+
+### API 增加整体超时时间
+
+- 用户要求 API 接口增加一个超时时间，默认 30 秒。
+- 已新增运行配置 `API_TIMEOUT_MS`，默认 `30000`。
+- 已新增 API 持久化字段 `api_timeout_ms`，启动迁移会给旧表补列，默认 `30000`。
+- 前端接口信息区新增“超时(秒)”输入框，默认 30 秒，保存时转换为毫秒。
+- 动态 API 运行时增加整体截止时间，覆盖参数 JS、SQL、结果 JS 和内部 `callApi` 的等待时间；超时返回 `408 api execute timeout`。
+- 已更新 `readme.md`、`test/runtime.test.js` 和 `test/config.test.js`。
+- 验证：
+  - `for file in src/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+  - 使用 `PORT=3015 npm run dev` 临时启动新代码，MySQL 迁移日志显示已新增 `api_timeout_ms`。
+  - 直接查询 `information_schema.columns` 确认 `api_timeout_ms` 默认值为 `30000`。
+  - 临时 `3015` 已停止；当前仍有旧 `3010` 和 `3012` 监听，未主动修改。
+
+### 撤销 API 整体超时时间并梳理现有超时
+
+- 用户指出理解错误，要求先去掉新增的 API 整体超时，数据库表字段也移除，并询问当前程序中有哪些默认超时。
+- 已移除 `API_TIMEOUT_MS`、`apiTimeoutMs`、`api_timeout_ms`、前端“超时(秒)”输入框和运行时整体 `withApiTimeout` 逻辑。
+- 已执行 MySQL 元数据库变更，删除 `ssql_api_definitions.api_timeout_ms` 字段。
+- 已确认 `information_schema.columns` 中 `api_timeout_ms` 数量为 `0`。
+- 当前程序显式默认超时：
+  - SQL 超时：`SQL_TIMEOUT_MS` 默认 `5000ms`，API 字段 `sql_timeout_ms` 默认 `5000ms`。
+  - JS 超时：`SCRIPT_TIMEOUT_MS` 默认 `1000ms`，API 字段 `script_timeout_ms` 默认 `1000ms`。
+  - JS Worker 内 `vm.Script.runInContext` 也硬编码 `1000ms`。
+  - 内部调用深度不是时间超时，`MAX_CALL_DEPTH` 默认 `5`。
+  - Node HTTP Server 未显式配置业务总超时，当前 Node 默认 `requestTimeout=300000ms`、`headersTimeout=60000ms`、`timeout=0`、`keepAliveTimeout=5000ms`。
+- 验证：
+  - `for file in src/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### SQL/JS 超时显示到 UI 并移除废弃字段
+
+- 用户要求 SQL 超时和 JS 超时显示在 UI 中并可修改，同时检查 `ssql_api_definitions.max_rows` 是否不用并移除废弃字段。
+- 已在接口信息区新增 `SQL超时(秒)` 和 `JS超时(秒)` 输入框。
+- 前端保存时将秒转换为现有字段 `sqlTimeoutMs` / `scriptTimeoutMs` 的毫秒值；回填时将毫秒显示为秒。
+- 新建 API 默认 SQL 超时 `5` 秒，JS 超时 `1` 秒。
+- 检查代码后确认 `max_rows` 已无读写引用，当前表结构中只有该字段属于已废弃字段。
+- 已执行 MySQL 元数据库变更，删除 `ssql_api_definitions.max_rows` 字段。
+- 已重新查询 `ssql_api_definitions` 表结构，确认字段为：`id`、`name`、`path`、`method`、`status`、`description`、`request_params`、`test_params`、`database_alias`、`sql_text`、`sql_mode`、`param_script_text`、`script_text`、`sql_timeout_ms`、`script_timeout_ms`、`deleted_at`、`created_at`、`updated_at`。
+- 验证：
+  - `for file in src/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### JS 沙箱支持 setTimeout
+
+- 用户反馈接口返回 `script execute failed`，原因是 `setTimeout is not defined`。
+- 原因是 JS Worker 沙箱只注入了白名单变量和 `callApi`，没有浏览器/Node 全局定时器。
+- 已在 `src/scriptWorker.js` 注入受控 `setTimeout` 和 `clearTimeout`，返回数字 id，不暴露 Node Timer 对象。
+- 外层 `scriptRunner` 的 `timeoutMs` 仍会终止整个 Worker，长定时器不能绕过 JS 超时。
+- 已新增 `test/scriptRunner.test.js`，覆盖定时器可用、`clearTimeout` 有效，以及长定时器仍触发脚本超时。
+- 验证：
+  - `for file in src/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### callApi 支持 GET 避免 api not found
+
+- 用户反馈 JS 返回 `script execute failed`，原因是 `api not found`。
+- 检查发现脚本内 `callApi(path, params)` 在运行时和管理端测试中都被硬编码为按 `POST` 查找目标 API；如果目标接口是 `GET`，会找不到。
+- 已调整 `callApi` 支持第三个参数：`callApi(path, params, { method: "GET" })` 或 `callApi(path, params, "GET")`。
+- 旧写法 `callApi(path, params)` 保持兼容：先按历史逻辑尝试 `POST`，如果 `POST` 找不到，再尝试 `GET`。
+- 已更新 `src/scriptWorker.js`、`src/scriptRunner.js`、`src/runtime.js`、`src/server.js` 和 `readme.md`。
+- 已新增测试覆盖 `callApi` method options 传递和 method 解析。
+- 验证：
+  - `for file in src/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### callApi 改为对象方法
+
+- 用户要求将 `callApi` 变更为对象，包含 `callApi.get` 和 `callApi.post` 方法。
+- 已将 JS 沙箱内的 `callApi` 改为冻结对象：`callApi.get(path, params)` 和 `callApi.post(path, params)`。
+- `callApi.get` 会以 `GET` 方法调用内部动态 API，`callApi.post` 会以 `POST` 方法调用。
+- 已给 JS 编辑器增加 `callApi.get` / `callApi.post` 属性补全。
+- 已更新 `readme.md` 和 `test/scriptRunner.test.js`。
+- 验证：
+  - `for file in src/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。

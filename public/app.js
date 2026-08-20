@@ -60,6 +60,8 @@ const els = {
   pathInput: document.getElementById("pathInput"),
   methodInput: document.getElementById("methodInput"),
   databaseAliasInput: document.getElementById("databaseAliasInput"),
+  sqlTimeoutInput: document.getElementById("sqlTimeoutInput"),
+  scriptTimeoutInput: document.getElementById("scriptTimeoutInput"),
   descriptionInput: document.getElementById("descriptionInput"),
   paramsInput: document.getElementById("paramsInput"),
   sqlModeInput: document.getElementById("sqlModeInput"),
@@ -113,6 +115,14 @@ drop temporary table tmp_students;`,
   </where>
 </select>`
 };
+
+function timeoutMsToSeconds(value, fallbackMs) {
+  return Math.max(1, Math.round(Number(value || fallbackMs) / 1000));
+}
+
+function timeoutSecondsToMs(value, fallbackSeconds) {
+  return Math.floor(Math.max(1, Number(value) || fallbackSeconds) * 1000);
+}
 
 function showStatus(message) {
   els.statusText.textContent = message;
@@ -747,6 +757,7 @@ function customFieldHint(editor) {
   const line = editor.getLine(cursor.line).slice(0, cursor.ch);
   const rowMatch = line.match(/(?:rows\s*\[\s*\d+\s*\]|row)\.([a-zA-Z0-9_]*)$/);
   const paramsMatch = line.match(/params\.([a-zA-Z0-9_]*)$/);
+  const callApiMatch = line.match(/callApi\.([a-zA-Z0-9_]*)$/);
   const wordMatch = line.match(/([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
 
   if (rowMatch) {
@@ -762,6 +773,16 @@ function customFieldHint(editor) {
   if (paramsMatch) {
     const prefix = paramsMatch[1];
     const list = getParamFields().filter((field) => field.startsWith(prefix));
+    return {
+      list,
+      from: CodeMirror.Pos(cursor.line, cursor.ch - prefix.length),
+      to: cursor
+    };
+  }
+
+  if (callApiMatch) {
+    const prefix = callApiMatch[1];
+    const list = ["get", "post"].filter((field) => field.startsWith(prefix));
     return {
       list,
       from: CodeMirror.Pos(cursor.line, cursor.ch - prefix.length),
@@ -860,6 +881,8 @@ function readForm() {
     path: els.pathInput.value.trim(),
     method: els.methodInput.value,
     databaseAlias: els.databaseAliasInput.value || getDefaultDatabaseAlias(),
+    sqlTimeoutMs: timeoutSecondsToMs(els.sqlTimeoutInput.value, 5),
+    scriptTimeoutMs: timeoutSecondsToMs(els.scriptTimeoutInput.value, 1),
     description: els.descriptionInput.value.trim(),
     testParams: readParamsEditor(),
     sqlMode: els.sqlModeInput.value,
@@ -883,6 +906,8 @@ function fillForm(api, options = {}) {
   els.pathInput.value = api.path || "/api/";
   els.methodInput.value = api.method || "GET";
   renderDatabaseOptions(api.databaseAlias || getDefaultDatabaseAlias());
+  els.sqlTimeoutInput.value = String(timeoutMsToSeconds(api.sqlTimeoutMs, 5000));
+  els.scriptTimeoutInput.value = String(timeoutMsToSeconds(api.scriptTimeoutMs, 1000));
   els.descriptionInput.value = api.description || "";
   state.editors.params.setValue(JSON.stringify(api.testParams || {}, null, 2));
   state.editors.sql.setValue(api.sqlText || "");
@@ -1095,6 +1120,8 @@ els.newApiBtn.addEventListener("click", () => {
     path: "/api/",
     method: "GET",
     databaseAlias: getDefaultDatabaseAlias(),
+    sqlTimeoutMs: 5000,
+    scriptTimeoutMs: 1000,
     status: "draft",
     testParams: {},
     sqlMode: "sql",

@@ -83,6 +83,8 @@
 - 请求方法，例如 `GET`、`POST`。
 - API 状态，例如草稿、已发布、已停用。
 - 数据库别名，例如 `default`、`erp`。
+- SQL 超时时间，默认 5 秒。
+- JS 超时时间，默认 1 秒。
 - 请求参数定义，包括参数名、类型、是否必填、默认值、说明。
 - 权限配置，包括公开访问、登录访问、角色访问。
 - 数据源配置。
@@ -139,7 +141,7 @@ JS 脚本的 `main()` 函数只接收 1 个对象入参，对象中包含以下 
 - `rows`: SQL 第一个结果集的行数组；参数处理阶段还没有执行 SQL，因此固定为空数组。
 - `resultSets`: SQL 返回的全部结果集，格式为 `[{ fields, rows }]`；参数处理阶段固定为空数组，结果集处理阶段推荐直接 `return resultSets` 返回多结果集。
 - `context`: 当前请求上下文，包含 `requestId`、`userId`、`roles`、`callDepth`、`callChain` 等可序列化信息。
-- `callApi`: 内部 API 调用方法，格式为 `await callApi("/api/xxx", { id: 1 })`。
+- `callApi`: 内部 API 调用对象，使用 `await callApi.get("/api/xxx", { id: 1 })` 或 `await callApi.post("/api/xxx", { id: 1 })`。
 
 参数处理脚本和结果集处理脚本使用同一套入参结构，但运行时机不同:
 
@@ -148,7 +150,7 @@ JS 脚本的 `main()` 函数只接收 1 个对象入参，对象中包含以下 
 
 ### 2.7 API 内部调用设计
 
-- 通过 `callApi(path, params)` 调用系统内其它 API。
+- 通过 `callApi.get(path, params)` 或 `callApi.post(path, params)` 调用系统内其它 API。
 - 内部调用需要复用当前用户身份和权限上下文。
 - 调用深度默认最多 5 层。
 - 同一次请求中不允许出现循环调用。
@@ -504,7 +506,7 @@ async function main({ params, headers, rows, resultSets, context, callApi }) {
 - `rows`: 第一个 SQL 结果集的行数组。SQL 前参数处理阶段固定为 `[]`。
 - `resultSets`: 全部 SQL 结果集，格式为 `[{ fields, rows }]`。多条 `select` 会产生多个结果集。
 - `context`: 请求上下文，常用字段有 `requestId`、`userId`、`roles`、`callDepth`、`callChain`。
-- `callApi`: 内部 API 调用函数，调用方式为 `await callApi(path, params)`。
+- `callApi`: 内部 API 调用对象，提供 `callApi.get(path, params)` 和 `callApi.post(path, params)`。
 
 参数处理脚本示例:
 
@@ -544,7 +546,7 @@ runScript(input):
   create isolate with memory limit
   create context
   inject safe values: params, headers, rows, resultSets, context
-  inject safe function: callApi
+  inject safe object: callApi
   wrap user script as async main function
   execute script with timeout
   wait result
@@ -571,7 +573,11 @@ type RunScriptInput = {
     callDepth: number;
     callChain: string[];
   };
-  callApi: (path: string, params: Record<string, unknown>) => Promise<unknown>;
+  callApi: (
+    path: string,
+    params: Record<string, unknown>,
+    options: { method: "GET" | "POST" }
+  ) => Promise<unknown>;
   timeoutMs: number;
 };
 
@@ -588,9 +594,15 @@ async function runScript(input: RunScriptInput): Promise<unknown> {
   sandbox.setValue("rows", deepClone(input.rows));
   sandbox.setValue("resultSets", deepClone(input.resultSets));
   sandbox.setValue("context", buildSafeContext(input.context));
-  sandbox.setFunction("callApi", async (path, params) => {
-    validateInternalApiCall(path, params, input.context);
-    return input.callApi(path, params);
+  sandbox.setValue("callApi", {
+    get: async (path, params) => {
+      validateInternalApiCall(path, params, input.context);
+      return input.callApi(path, params, { method: "GET" });
+    },
+    post: async (path, params) => {
+      validateInternalApiCall(path, params, input.context);
+      return input.callApi(path, params, { method: "POST" });
+    }
   });
 
   const wrappedScript = `
@@ -643,7 +655,7 @@ async function runScript(input: RunScriptInput): Promise<unknown> {
 
 ### 4.10 内部 API 调用实现
 
-- `callApi(path, params)` 不走真实 HTTP 请求，直接调用 `api-runtime`。
+- `callApi.get(path, params)` 和 `callApi.post(path, params)` 不走真实 HTTP 请求，直接调用 `api-runtime`。
 - 内部调用复用当前请求的用户身份、权限和请求 ID。
 - 每次调用把当前 API 加入调用链。
 - 执行前检查调用链中是否已经存在相同 API。

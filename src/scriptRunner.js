@@ -53,7 +53,7 @@ function buildSafeContext(context) {
   };
 }
 
-function validateInternalApiCall(apiPath, params, context, maxCallDepth) {
+function validateInternalApiCall(apiPath, params, options, context, maxCallDepth) {
   // callApi 只允许调用动态 API，禁止绕过管理端权限边界。
   if (typeof apiPath !== "string" || !apiPath.startsWith("/api/")) {
     throw new AppError(400, "callApi path must start with /api/");
@@ -61,6 +61,9 @@ function validateInternalApiCall(apiPath, params, context, maxCallDepth) {
   if (apiPath.startsWith("/admin/")) throw new AppError(403, "callApi cannot call admin api");
   if (!params || typeof params !== "object" || Array.isArray(params)) {
     throw new AppError(400, "callApi params must be object");
+  }
+  if (options !== undefined && options !== null && typeof options !== "string" && (typeof options !== "object" || Array.isArray(options))) {
+    throw new AppError(400, "callApi options must be object or method string");
   }
   if ((context.callDepth || 0) >= maxCallDepth) {
     throw new AppError(409, "api call depth exceeded");
@@ -116,8 +119,8 @@ async function runScript(input) {
       if (message.type === "callApi") {
         try {
           // Worker 不能直接访问 runtime，只能通过消息把内部 API 调用交回主线程。
-          validateInternalApiCall(message.path, message.params, input.context, input.maxCallDepth);
-          const result = await input.callApi(message.path, message.params);
+          validateInternalApiCall(message.path, message.params, message.options, input.context, input.maxCallDepth);
+          const result = await input.callApi(message.path, message.params, message.options);
           worker.postMessage({ type: "callApiResult", id: message.id, result: deepClone(result) });
         } catch (error) {
           worker.postMessage({

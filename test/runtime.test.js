@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { applyParamScriptResult } = require("../src/runtime");
+const { applyParamScriptResult, normalizeCallApiMethod } = require("../src/runtime");
 
 test("applyParamScriptResult accepts object return value as processed params", () => {
   const currentParams = { id: "7" };
@@ -34,4 +34,10 @@ test("applyParamScriptResult keeps current params for primitive return value", (
 
   assert.equal(result.directReturn, false);
   assert.deepEqual(result.params, currentParams);
+});
+
+test("normalizeCallApiMethod accepts options object and method string", () => {
+  assert.equal(normalizeCallApiMethod({ method: "get" }), "GET");
+  assert.equal(normalizeCallApiMethod("post"), "POST");
+  assert.equal(normalizeCallApiMethod({}), null);
 });

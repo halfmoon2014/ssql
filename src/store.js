@@ -3,9 +3,10 @@ const path = require("path");
 const { randomUUID } = require("crypto");
 const mysql = require("mysql2/promise");
 const { AppError } = require("./errors");
+const { formatChinaTime } = require("./time");
 
 function now() {
-  return new Date().toISOString();
+  return formatChinaTime();
 }
 
 function toJson(value, fallback) {
@@ -160,6 +161,7 @@ class Store {
       }
       if (this.logger) this.logger.info("mysql schema migrated", { table: "ssql_api_definitions", column: "database_alias" });
     }
+
   }
 
   async migrateJsonApis() {

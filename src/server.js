@@ -112,6 +112,16 @@ function serveStatic(req, res, urlPath) {
   res.end(content);
 }
 
+function writeRawHttpResponse(socket, statusLine) {
+  // clientError 发生在请求进入路由前，只能手写最小 HTTP 响应。
+  if (!socket || socket.destroyed) return;
+  if (!socket.writable) {
+    socket.destroy();
+    return;
+  }
+  socket.end(`${statusLine}\r\nConnection: close\r\n\r\n`);
+}
+
 function listDatabaseSources() {
   // 前端只需要别名和类型，不能把密码等连接配置暴露出去。
   return (config.database.sources || []).map((source) => ({
@@ -271,16 +281,15 @@ async function handleAdmin(req, res, url, body) {
         },
         timeoutMs: api.scriptTimeoutMs || config.scriptTimeoutMs,
         maxCallDepth: config.maxCallDepth,
-        callApi: async (apiPath, callParams) => {
+        callApi: async (apiPath, callParams, callOptions) => {
           // 管理端测试允许调用草稿接口，方便联调未发布的内部依赖。
-          const response = await runtime.executeByPath(apiPath, "POST", {
+          return runtime.executeCallApi(apiPath, callParams, callOptions, {
             params: callParams,
             headers: req.headers,
             allowDraft: true,
             userId: 1,
             roles: ["admin"]
           });
-          return response.data;
         }
       });
       logger.info("admin script tested", { apiId: api.id, path: api.path, rows: rows.length });
@@ -396,8 +405,27 @@ async function start() {
 
   server.on("clientError", (error, socket) => {
     // 低层 HTTP 解析错误不会进入 handleRequest，这里单独兜底。
+    if (error.code === "ERR_HTTP_REQUEST_TIMEOUT" || error.message === "Request timeout") {
+      logger.info("client request timeout", {
+        code: error.code || null,
+        message: error.message
+      });
+      writeRawHttpResponse(socket, "HTTP/1.1 408 Request Timeout");
+      return;
+    }
+    if (error.code === "ECONNRESET") {
+      logger.info("client connection reset", {
+        code: error.code,
+        message: error.message
+      });
+      if (socket && !socket.destroyed) socket.destroy();
+      return;
+    }
     logger.error("client error", error);
-    socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+    const statusLine = error.code === "HPE_HEADER_OVERFLOW"
+      ? "HTTP/1.1 431 Request Header Fields Too Large"
+      : "HTTP/1.1 400 Bad Request";
+    writeRawHttpResponse(socket, statusLine);
   });
 
   server.listen(config.port, config.host, () => {
