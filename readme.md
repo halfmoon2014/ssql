@@ -735,7 +735,7 @@ async function runScript(input: RunScriptInput): Promise<unknown> {
 - 支持灰度发布。
 - 支持更多脚本语言或可视化数据处理。
 
-###其它
+### 其它
 
 运行命令npm run dev 
 

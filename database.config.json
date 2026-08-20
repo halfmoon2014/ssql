@@ -1,0 +1,27 @@
+{
+  "defaultAlias": "default",
+  "connections": [
+    {
+      "alias": "default",
+      "type": "mysql",
+      "host": "192.168.3.2",
+      "port": 3306,
+      "user": "root",
+      "password": "123456",
+      "database": "dbgirl"
+    },
+       {
+      "alias": "erp",
+      "type": "mssql",
+      "server": "192.168.3.2",
+      "port": 1433,
+      "user": "test",
+      "password": "123456",
+      "database": "shifenzheng",
+      "options": {
+        "encrypt": false,
+        "trustServerCertificate": true
+      }
+    }	
+  ]
+}

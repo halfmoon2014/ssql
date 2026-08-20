@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SQL API 管理</title>
+    <link rel="stylesheet" href="vendor/codemirror/lib/codemirror.css">
+    <link rel="stylesheet" href="vendor/codemirror/addon/hint/show-hint.css">
+    <link rel="stylesheet" href="vendor/codemirror/theme/eclipse.css">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="app">
+      <!-- 左侧栏负责 API 列表、筛选和分页。 -->
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div>
+            <div class="brand">SQL API</div>
+            <div class="sidebar-subtitle">接口管理</div>
+          </div>
+          <button id="newApiBtn" class="primary">新建</button>
+        </div>
+        <form id="apiSearchForm" class="api-search">
+          <div class="search-title">筛选</div>
+          <label>名称<input id="nameSearchInput" placeholder="按名称查找"></label>
+          <label>SQL<input id="sqlSearchInput" placeholder="按 SQL 查找"></label>
+          <div class="search-actions">
+            <button type="submit" class="primary">查找</button>
+            <button type="button" id="resetSearchBtn">重置</button>
+          </div>
+        </form>
+        <div id="apiList" class="api-list"></div>
+        <div class="pagination">
+          <button id="prevPageBtn" type="button">上一页</button>
+          <span id="pageInfo">0 / 0</span>
+          <label class="page-size-control">每页
+            <select id="pageSizeInput">
+              <option>10</option>
+              <option selected>20</option>
+              <option>50</option>
+              <option>100</option>
+            </select>
+          </label>
+          <button id="nextPageBtn" type="button">下一页</button>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <!-- 顶部工具栏展示当前 API 状态，并提供保存、发布、停用操作。 -->
+        <header class="toolbar">
+          <div>
+            <h1 id="pageTitle">API 编辑</h1>
+            <p id="statusText">创建并发布动态 API</p>
+          </div>
+          <div class="actions">
+            <button id="saveBtn">保存</button>
+            <button id="publishBtn">发布</button>
+            <button id="disableBtn">停用</button>
+          </div>
+        </header>
+
+        <section class="editor-stack">
+          <!-- API 基础信息和示例参数：运行时按路径、方法和参数执行动态接口。 -->
+          <div class="panel">
+            <div class="panel-title">
+              <h2>接口信息</h2>
+              <span id="statusBadge" class="status-badge">draft</span>
+            </div>
+            <div class="api-info-grid">
+              <div class="form-grid">
+                <label>名称<input id="nameInput" placeholder="订单列表"></label>
+                <label>路径<input id="pathInput" placeholder="/api/order/list"></label>
+                <label>方法
+                  <select id="methodInput">
+                    <option>GET</option>
+                    <option>POST</option>
+                    <option>PUT</option>
+                    <option>DELETE</option>
+                  </select>
+                </label>
+                <label>数据库<select id="databaseAliasInput"></select></label>
+                <label class="span-2">说明<textarea id="descriptionInput" rows="3"></textarea></label>
+              </div>
+              <label class="params-field">
+                <span class="field-title">示例参数 <span class="code-language">JSON</span></span>
+                <textarea id="paramsInput" class="code params-code" rows="8" spellcheck="false" autocomplete="off" autocapitalize="off" data-language="json">{}</textarea>
+              </label>
+            </div>
+          </div>
+
+          <!-- SQL 编辑器只配置查询语句，执行结果会作为 rows 传给 JS 脚本。 -->
+          <div class="panel">
+            <div class="panel-title">
+              <h2>SQL</h2>
+              <div class="panel-actions">
+                <span class="code-language">SQL</span>
+                <select id="sqlModeInput" class="sql-mode-select" aria-label="SQL 输入模式">
+                  <option value="sql">原生 SQL</option>
+                  <option value="xml">MyBatis XML</option>
+                </select>
+                <button id="runSqlBtn" type="button" class="primary">执行 SQL</button>
+                <button id="sqlHelpBtn" type="button">帮助</button>
+              </div>
+            </div>
+            <div id="sqlHelpBox" class="help-box hidden">
+              <button id="sqlHelpCloseBtn" type="button" class="help-close" aria-label="关闭 SQL 帮助">×</button>
+              <div class="help-tabs">
+                <button id="rawSqlHelpBtn" type="button" class="active">原生 SQL</button>
+                <button id="xmlSqlHelpBtn" type="button">MyBatis XML</button>
+              </div>
+              <pre id="sqlHelpContent" class="help-code"></pre>
+            </div>
+            <textarea id="sqlInput" class="code sql-code" rows="10" spellcheck="false" autocomplete="off" autocapitalize="off" data-language="sql" placeholder="select * from users where id = #{userId}"></textarea>
+          </div>
+
+          <!-- JS 处理分为 SQL 前参数处理和 SQL 后结果集处理，两个脚本都必须定义 main。 -->
+          <div class="panel">
+            <div class="panel-title">
+              <h2>JS 处理</h2>
+              <div class="panel-actions">
+                <span class="code-language">JavaScript</span>
+                <select id="scriptTypeInput" class="script-type-select" aria-label="JS 处理类型">
+                  <option value="params">1 参数处理</option>
+                  <option value="result" selected>2 结果集处理</option>
+                </select>
+                <button id="scriptHelpBtn" type="button">帮助</button>
+              </div>
+            </div>
+            <div id="scriptHelpBox" class="help-box hidden">
+              <button id="scriptHelpCloseBtn" type="button" class="help-close" aria-label="关闭 JS 帮助">×</button>
+              <pre class="help-code">参数处理:
+返回普通对象或 { params: {...} } 时继续执行 SQL。
+返回 { directReturn: true, data: ... } 时跳过 SQL 和结果集处理，直接返回 data。
+留空时不处理参数，直接继续执行 SQL。
+
+直接返回示例:
+async function main({ params }) {
+  if (params.skipSql === true) {
+    return { directReturn: true, data: { code: 0, params } };
+  }
+  return { params };
+}
+
+结果集处理:
+SQL 执行后运行，main 的返回值就是动态 API 响应体。
+直接 return resultSets 时，接口返回全部结果集。</pre>
+            </div>
+            <textarea id="scriptInput" class="code js-code" rows="13" spellcheck="false" autocomplete="off" autocapitalize="off" data-language="javascript">async function main({ params, resultSets, callApi }) {
+  return resultSets;
+}</textarea>
+          </div>
+
+          <!-- 日志区展示 SQL 测试结果，同时提供 rows 字段数量提示。 -->
+          <div class="panel">
+            <div class="panel-title">
+              <h2>日志</h2>
+              <span id="rowFieldsInfo" class="code-language">rows: 0 个字段</span>
+            </div>
+            <pre id="logBox" class="log-box">等待执行 SQL</pre>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- CodeMirror 依赖先加载，最后加载业务脚本 app.js。 -->
+    <script src="vendor/codemirror/lib/codemirror.js"></script>
+    <script src="vendor/codemirror/addon/edit/matchbrackets.js"></script>
+    <script src="vendor/codemirror/addon/edit/closebrackets.js"></script>
+    <script src="vendor/codemirror/addon/hint/show-hint.js"></script>
+    <script src="vendor/codemirror/addon/hint/sql-hint.js"></script>
+    <script src="vendor/codemirror/addon/hint/javascript-hint.js"></script>
+    <script src="vendor/codemirror/mode/sql/sql.js"></script>
+    <script src="vendor/codemirror/mode/javascript/javascript.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,502 @@
+* {
+  box-sizing: border-box;
+}
+
+/* 基础排版和表单控件重置。 */
+body {
+  margin: 0;
+  color: #172026;
+  background: #f3f6f8;
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid #c6d0da;
+  border-radius: 6px;
+  color: #172026;
+  background: #fff;
+  cursor: pointer;
+}
+
+button.primary {
+  border-color: #1f6f78;
+  color: #fff;
+  background: #1f6f78;
+}
+
+button:disabled {
+  color: #98a5af;
+  background: #eef3f6;
+  cursor: not-allowed;
+}
+
+/* 主布局：桌面端左侧 API 列表，右侧编辑工作区。 */
+.app {
+  display: grid;
+  min-height: 100vh;
+  grid-template-columns: 400px minmax(0, 1fr);
+}
+
+.sidebar {
+  border-right: 1px solid #d7dee6;
+  background: #fbfcfd;
+  padding: 14px;
+}
+
+.sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.brand {
+  font-size: 21px;
+  font-weight: 700;
+}
+
+.sidebar-subtitle {
+  margin-top: 3px;
+  color: #62727f;
+  font-size: 12px;
+}
+
+/* 左侧筛选、列表和分页。 */
+.api-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.api-search {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #d7dee6;
+}
+
+.search-title {
+  color: #172026;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.api-search label {
+  margin-bottom: 0;
+}
+
+.search-actions,
+.pagination {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.search-actions button {
+  flex: 1;
+}
+
+.api-item {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 1px solid #d7dee6;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.api-item.active {
+  border-color: #1f6f78;
+  background: #edf7f7;
+}
+
+.api-item strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.api-path {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #62727f;
+  font-size: 12px;
+}
+
+.api-description {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #40505c;
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.api-item-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.method-badge,
+.status-dot,
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.method-badge {
+  padding: 4px 7px;
+  color: #17465f;
+  background: #e7f0f4;
+  font-weight: 700;
+}
+
+.status-dot,
+.status-badge {
+  padding: 4px 8px;
+  color: #52616d;
+  background: #eef3f6;
+}
+
+.status-published {
+  color: #0f766e;
+  background: #dcf4ee;
+}
+
+.status-disabled {
+  color: #a34242;
+  background: #f8e6e6;
+}
+
+.status-draft {
+  color: #6b5b12;
+  background: #f5edc8;
+}
+
+.empty-list {
+  padding: 12px;
+  border: 1px dashed #c6d0da;
+  border-radius: 6px;
+  color: #62727f;
+  background: #f8fafb;
+  font-size: 13px;
+  text-align: center;
+}
+
+.pagination {
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.pagination button {
+  padding: 0 8px;
+}
+
+.pagination span {
+  color: #62727f;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.page-size-control {
+  margin-bottom: 0;
+  grid-template-columns: auto 64px;
+  gap: 5px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.workspace {
+  min-width: 0;
+  padding: 16px;
+}
+
+/* 右侧编辑区和表单布局。 */
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+  padding: 0 2px;
+}
+
+.toolbar h1 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.toolbar p {
+  margin: 4px 0 0;
+  color: #62727f;
+}
+
+.actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.editor-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.panel {
+  border: 1px solid #d7dee6;
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+}
+
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.panel-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.panel-title h2 {
+  margin: 0;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.help-box {
+  position: relative;
+  margin-bottom: 8px;
+  border: 1px solid #d7dee6;
+  border-radius: 6px;
+  background: #f8fafb;
+  padding: 8px 36px 8px 8px;
+}
+
+.help-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  min-height: 24px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.help-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.help-tabs button.active {
+  border-color: #1f6f78;
+  color: #fff;
+  background: #1f6f78;
+}
+
+.help-code {
+  margin: 0;
+  overflow: auto;
+  color: #172026;
+  font-family: Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.sql-mode-select,
+.script-type-select {
+  width: 120px;
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.script-type-select {
+  width: 130px;
+}
+
+.api-info-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.3fr) minmax(100px, 120px) minmax(140px, 160px);
+  gap: 8px;
+  align-items: start;
+}
+
+.span-2 {
+  grid-column: 1 / -1;
+}
+
+.params-field {
+  margin-bottom: 0;
+}
+
+.field-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.code-language {
+  border: 1px solid #c6d0da;
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: #40505c;
+  background: #eef3f6;
+  font-size: 12px;
+}
+
+label {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+  color: #40505c;
+  font-size: 13px;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid #c6d0da;
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: #172026;
+  background: #fff;
+}
+
+textarea.code {
+  font-family: Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+/* CodeMirror 编辑器尺寸和聚焦状态。 */
+.CodeMirror {
+  border: 1px solid #c6d0da;
+  border-radius: 6px;
+  color: #172026;
+  background: #fff;
+  font-family: Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.CodeMirror-focused {
+  border-color: #176b87;
+  box-shadow: 0 0 0 2px rgba(23, 107, 135, 0.12);
+}
+
+.CodeMirror-invalid,
+.CodeMirror-invalid.CodeMirror-focused {
+  border-color: #c2410c;
+  box-shadow: 0 0 0 2px rgba(194, 65, 12, 0.14);
+}
+
+.CodeMirror pre.CodeMirror-line,
+.CodeMirror pre.CodeMirror-line-like {
+  font-family: inherit;
+}
+
+.CodeMirror .cm-ssql-param {
+  color: #7c3aed;
+  font-weight: 700;
+}
+
+.sql-code + .CodeMirror {
+  height: 240px;
+}
+
+.params-code + .CodeMirror {
+  height: 150px;
+}
+
+.js-code + .CodeMirror {
+  height: 300px;
+}
+
+.log-box {
+  min-height: 160px;
+  max-height: 320px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid #c6d0da;
+  border-radius: 6px;
+  padding: 10px;
+  color: #dce9ea;
+  background: #172026;
+  font-family: Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* 小屏幕下改为单列布局，保留完整编辑能力。 */
+@media (max-width: 900px) {
+  .app {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #d7dee6;
+  }
+
+  .toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .api-info-grid {
+    grid-template-columns: 1fr;
+  }
+}
