@@ -2,3 +2,5 @@ node_modules/
 data/
 .env
 npm-debug.log*
+database.config.json
+.history/*
