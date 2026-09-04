@@ -3,6 +3,12 @@
 }
 
 /* 基础排版和表单控件重置。 */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   color: #172026;
@@ -33,20 +39,55 @@ button.primary {
   background: #1f6f78;
 }
 
+button.loading {
+  position: relative;
+  padding-left: 28px;
+  cursor: wait;
+}
+
+button.loading::before {
+  position: absolute;
+  top: 50%;
+  left: 9px;
+  width: 11px;
+  height: 11px;
+  margin-top: -6px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  content: "";
+  animation: spin 0.7s linear infinite;
+}
+
 button:disabled {
   color: #98a5af;
   background: #eef3f6;
   cursor: not-allowed;
 }
 
+input[type="checkbox"] {
+  width: auto;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* 主布局：桌面端左侧 API 列表，右侧编辑工作区。 */
 .app {
   display: grid;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   grid-template-columns: 400px minmax(0, 1fr);
 }
 
 .sidebar {
+  display: grid;
+  height: 100vh;
+  min-height: 0;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   border-right: 1px solid #d7dee6;
   background: #fbfcfd;
   padding: 14px;
@@ -73,8 +114,11 @@ button:disabled {
 /* 左侧筛选、列表和分页。 */
 .api-list {
   display: grid;
+  align-content: start;
   gap: 6px;
   margin-top: 12px;
+  overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .api-search {
@@ -229,18 +273,147 @@ button:disabled {
 }
 
 .workspace {
+  position: relative;
+  height: 100vh;
   min-width: 0;
-  padding: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 0px 16px 16px 16px;
+}
+
+.toast {
+  position: fixed;
+  z-index: 20;
+  right: 18px;
+  bottom: 18px;
+  max-width: min(360px, calc(100vw - 36px));
+  padding: 9px 12px;
+  border: 1px solid #b7d8cb;
+  border-radius: 6px;
+  color: #12473e;
+  background: #e8f7f0;
+  box-shadow: 0 8px 22px rgba(23, 32, 38, 0.14);
+  font-size: 13px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.toast.error {
+  border-color: #efc4c4;
+  color: #8a2424;
+  background: #fff0f0;
+}
+
+.modal-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(23, 32, 38, 0.38);
+}
+
+.modal {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  border: 1px solid #c6d0da;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 16px 42px rgba(23, 32, 38, 0.22);
+}
+
+.modal-header,
+.modal-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+}
+
+.modal-header {
+  border-bottom: 1px solid #d7dee6;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.modal-body {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.modal-actions {
+  justify-content: flex-end;
+  border-top: 1px solid #d7dee6;
+  background: #f8fafb;
+}
+
+.icon-button {
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.panel-toggle-button {
+  font-size: 16px;
+}
+
+.editor-context-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 150px;
+  overflow: hidden;
+  border: 1px solid #c6d0da;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 10px 26px rgba(23, 32, 38, 0.18);
+  padding: 4px;
+}
+
+.editor-context-menu button {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  border: 0;
+  border-radius: 4px;
+  padding: 0 9px;
+  color: #172026;
+  background: transparent;
+  text-align: left;
+}
+
+.editor-context-menu button:hover {
+  background: #edf7f7;
 }
 
 /* 右侧编辑区和表单布局。 */
 .toolbar {
+  position: sticky;
+  z-index: 10;
+  top: 0;
   display: flex;
   justify-content: space-between;
   gap: 12px;
   align-items: center;
-  margin-bottom: 10px;
-  padding: 0 2px;
+  margin: -16px -16px 10px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #d7dee6;
+  background: rgba(243, 246, 248, 0.96);
+  box-shadow: 0 4px 12px rgba(23, 32, 38, 0.06);
+  backdrop-filter: blur(6px);
+}
+
+.toolbar > div:first-child {
+  min-width: 0;
 }
 
 .toolbar h1 {
@@ -249,12 +422,17 @@ button:disabled {
 }
 
 .toolbar p {
+  overflow: hidden;
+  max-width: 100%;
   margin: 4px 0 0;
   color: #62727f;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .actions {
   display: flex;
+  flex-shrink: 0;
   gap: 6px;
   flex-wrap: wrap;
 }
@@ -356,7 +534,7 @@ button:disabled {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .form-grid {
@@ -364,13 +542,84 @@ button:disabled {
   grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.3fr) minmax(100px, 120px) minmax(140px, 160px);
   gap: 8px;
   align-items: start;
+  height: 100%;
 }
 
 .span-2 {
   grid-column: 1 / -1;
 }
 
+.capability-control {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  min-height: 54px;
+  border: 1px solid #c6d0da;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #fbfcfd;
+}
+
+.field-title-text {
+  margin-bottom: 5px;
+  color: #40505c;
+  font-size: 13px;
+}
+
+.capability-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.capability-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  border: 1px solid #b8d8db;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #17465f;
+  background: #e7f5f4;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.capability-empty {
+  color: #62727f;
+  font-size: 12px;
+}
+
+.capability-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: start;
+  margin: 0;
+  border: 1px solid #d7dee6;
+  border-radius: 6px;
+  padding: 10px;
+  color: #172026;
+  background: #fff;
+}
+
+.capability-option strong,
+.capability-option small {
+  display: block;
+}
+
+.capability-option small {
+  margin-top: 3px;
+  color: #62727f;
+  line-height: 1.45;
+}
+
 .params-field {
+  display: grid;
+  grid-template-rows: auto minmax(150px, 1fr);
+  height: 100%;
   margin-bottom: 0;
 }
 
@@ -449,15 +698,36 @@ textarea.code {
 }
 
 .sql-code + .CodeMirror {
-  height: 240px;
+  height: auto;
+  min-height: 240px;
+}
+
+.sql-code + .CodeMirror .CodeMirror-scroll {
+  min-height: 240px;
+}
+
+.sql-code + .CodeMirror .CodeMirror-scroll,
+.js-code + .CodeMirror .CodeMirror-scroll {
+  overflow-y: hidden;
+  overflow-x: auto;
 }
 
 .params-code + .CodeMirror {
-  height: 150px;
+  height: 100%;
+  min-height: 150px;
+}
+
+.params-code + .CodeMirror .CodeMirror-scroll {
+  min-height: 150px;
 }
 
 .js-code + .CodeMirror {
-  height: 300px;
+  height: auto;
+  min-height: 300px;
+}
+
+.js-code + .CodeMirror .CodeMirror-scroll {
+  min-height: 300px;
 }
 
 .log-box {
@@ -480,11 +750,18 @@ textarea.code {
 @media (max-width: 900px) {
   .app {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .sidebar {
+    height: auto;
+    max-height: 42vh;
     border-right: 0;
     border-bottom: 1px solid #d7dee6;
+  }
+
+  .workspace {
+    height: auto;
   }
 
   .toolbar {
@@ -498,5 +775,10 @@ textarea.code {
 
   .api-info-grid {
     grid-template-columns: 1fr;
+  }
+
+  .capability-control {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

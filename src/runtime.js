@@ -2,6 +2,7 @@ const { randomUUID } = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { AppError } = require("./errors");
+const { executeCapability } = require("./capabilities");
 const { executeSqlWithFields, prepareSqlExecution, resolveDatabaseSource } = require("./sqlExecutor");
 const { runScript } = require("./scriptRunner");
 const { formatChinaFileTime, formatChinaTime } = require("./time");
@@ -111,6 +112,18 @@ class ApiRuntime {
     }
   }
 
+  executeScriptCapability(api, context, name, args) {
+    // 脚本能力统一从主线程代理执行；这里按 API 授权并输出审计日志。
+    return executeCapability({
+      name,
+      args,
+      api,
+      context,
+      config: this.config,
+      logger: this.store.logger
+    });
+  }
+
   async runParamScript(api, params, options = {}) {
     if (!hasScript(api.paramScriptText)) {
       return {
@@ -140,6 +153,15 @@ class ApiRuntime {
       },
       timeoutMs: api.scriptTimeoutMs || this.config.scriptTimeoutMs,
       maxCallDepth: this.config.maxCallDepth,
+      scriptWorker: this.config.scriptWorker,
+      executeCapability: (name, args) => this.executeScriptCapability(api, {
+        requestId,
+        userId: options.userId,
+        roles: options.roles || [],
+        callDepth: nextCallChain.length - 1,
+        callChain: Array.isArray(options.debugCallChain) ? options.debugCallChain : [...callChain, api.path],
+        scriptType: "params"
+      }, name, args),
       callApi: async (apiPath, callParams, callOptions) => {
         return this.executeCallApi(apiPath, callParams, callOptions, {
           params: callParams,
@@ -264,10 +286,20 @@ class ApiRuntime {
           userId: options.userId,
           roles: options.roles || [],
           callDepth: nextCallChain.length - 1,
-          callChain: debug.callChain
+          callChain: debug.callChain,
+          scriptType: "result"
         },
         timeoutMs: api.scriptTimeoutMs || this.config.scriptTimeoutMs,
         maxCallDepth: this.config.maxCallDepth,
+        scriptWorker: this.config.scriptWorker,
+        executeCapability: (name, args) => this.executeScriptCapability(api, {
+          requestId,
+          userId: options.userId,
+          roles: options.roles || [],
+          callDepth: nextCallChain.length - 1,
+          callChain: debug.callChain,
+          scriptType: "result"
+        }, name, args),
         callApi: async (apiPath, callParams, callOptions) => {
           // 脚本内 callApi 会再次进入 runtime，并继承调用链用于防环和日志追踪。
           return this.executeCallApi(apiPath, callParams, callOptions, {

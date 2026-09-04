@@ -18,6 +18,10 @@ const state = {
     params: "",
     result: ""
   },
+  capabilityModalSnapshot: [],
+  saving: false,
+  toastTimer: null,
+  editorContextMenu: null,
   editors: {
     params: null,
     sql: null,
@@ -26,6 +30,7 @@ const state = {
 };
 
 const sqlResultCachePrefix = "ssql.sqlResult.";
+const apiInfoCollapsePrefix = "ssql.apiInfoCollapsed.";
 
 function getAppBasePath() {
   // 反向代理挂在 /ssql/ 这类子路径时，app.js 的实际地址会带前缀。
@@ -51,17 +56,27 @@ const els = {
   nextPageBtn: document.getElementById("nextPageBtn"),
   pageInfo: document.getElementById("pageInfo"),
   saveBtn: document.getElementById("saveBtn"),
-  publishBtn: document.getElementById("publishBtn"),
-  disableBtn: document.getElementById("disableBtn"),
+  statusToggleBtn: document.getElementById("statusToggleBtn"),
   pageTitle: document.getElementById("pageTitle"),
   statusText: document.getElementById("statusText"),
   statusBadge: document.getElementById("statusBadge"),
+  apiInfoToggleBtn: document.getElementById("apiInfoToggleBtn"),
+  apiInfoGrid: document.getElementById("apiInfoGrid"),
+  toast: document.getElementById("toast"),
   nameInput: document.getElementById("nameInput"),
   pathInput: document.getElementById("pathInput"),
   methodInput: document.getElementById("methodInput"),
   databaseAliasInput: document.getElementById("databaseAliasInput"),
   sqlTimeoutInput: document.getElementById("sqlTimeoutInput"),
   scriptTimeoutInput: document.getElementById("scriptTimeoutInput"),
+  capabilitySummary: document.getElementById("capabilitySummary"),
+  capabilityOpenBtn: document.getElementById("capabilityOpenBtn"),
+  capabilityModal: document.getElementById("capabilityModal"),
+  capabilityCloseBtn: document.getElementById("capabilityCloseBtn"),
+  capabilityCancelBtn: document.getElementById("capabilityCancelBtn"),
+  capabilityApplyBtn: document.getElementById("capabilityApplyBtn"),
+  capFilesInspectInput: document.getElementById("capFilesInspectInput"),
+  capFilesDownloadInput: document.getElementById("capFilesDownloadInput"),
   descriptionInput: document.getElementById("descriptionInput"),
   paramsInput: document.getElementById("paramsInput"),
   sqlModeInput: document.getElementById("sqlModeInput"),
@@ -72,6 +87,7 @@ const els = {
   sqlHelpCloseBtn: document.getElementById("sqlHelpCloseBtn"),
   sqlHelpContent: document.getElementById("sqlHelpContent"),
   runSqlBtn: document.getElementById("runSqlBtn"),
+  runScriptBtn: document.getElementById("runScriptBtn"),
   logBox: document.getElementById("logBox"),
   rowFieldsInfo: document.getElementById("rowFieldsInfo"),
   sqlInput: document.getElementById("sqlInput"),
@@ -84,9 +100,124 @@ const els = {
 
 const defaultParamScript = "";
 
-const defaultResultScript = `async function main({ params, resultSets, callApi }) {
+const defaultResultScript = `async function main({ params, resultSets, callApi, files }) {
   return resultSets;
 }`;
+
+const scriptCapabilityDefinitions = [
+  {
+    name: "files.inspectUrl",
+    label: "探测网络文件大小"
+  },
+  {
+    name: "files.downloadTemp",
+    label: "下载到临时文件"
+  }
+];
+
+const capabilityReturnSchemas = {
+  "files.inspectUrl": {
+    properties: {
+      url: null,
+      contentType: null,
+      size: null,
+      downloaded: null
+    }
+  },
+  "files.downloadTemp": {
+    properties: {
+      url: null,
+      contentType: null,
+      size: null,
+      fileId: null,
+      filename: null
+    }
+  },
+  "files.tryInspectUrl": {
+    properties: {
+      ok: null,
+      data: {
+        properties: {
+          url: null,
+          contentType: null,
+          size: null,
+          downloaded: null
+        }
+      },
+      error: {
+        properties: {
+          name: null,
+          capability: null,
+          code: null,
+          message: null,
+          statusCode: null,
+          details: null
+        }
+      }
+    }
+  },
+  "files.tryDownloadTemp": {
+    properties: {
+      ok: null,
+      data: {
+        properties: {
+          url: null,
+          contentType: null,
+          size: null,
+          fileId: null,
+          filename: null
+        }
+      },
+      error: {
+        properties: {
+          name: null,
+          capability: null,
+          code: null,
+          message: null,
+          statusCode: null,
+          details: null
+        }
+      }
+    }
+  },
+  "callApi.tryGet": {
+    properties: {
+      ok: null,
+      data: null,
+      error: {
+        properties: {
+          name: null,
+          capability: null,
+          code: null,
+          message: null,
+          statusCode: null,
+          details: null
+        }
+      }
+    }
+  },
+  "callApi.tryPost": {
+    properties: {
+      ok: null,
+      data: null,
+      error: {
+        properties: {
+          name: null,
+          capability: null,
+          code: null,
+          message: null,
+          statusCode: null,
+          details: null
+        }
+      }
+    }
+  }
+};
+
+const contextHintFields = ["requestId", "userId", "roles", "callDepth", "callChain", "scriptType"];
+const resultSetHintFields = ["fields", "rows"];
+const arrayHintFields = ["length", "at", "concat", "entries", "every", "filter", "find", "findIndex", "forEach", "includes", "indexOf", "join", "map", "slice", "some"];
+const commonHeaderNames = ["accept", "accept-language", "content-type", "host", "origin", "referer", "user-agent", "x-forwarded-for", "x-request-id"];
 
 const sqlHelpText = {
   raw: `select *
@@ -128,8 +259,257 @@ function showStatus(message) {
   els.statusText.textContent = message;
 }
 
+function showToast(message, type = "success") {
+  if (state.toastTimer) clearTimeout(state.toastTimer);
+  els.toast.textContent = message;
+  els.toast.className = `toast${type === "error" ? " error" : ""}`;
+  state.toastTimer = setTimeout(() => {
+    els.toast.classList.add("hidden");
+  }, 2600);
+}
+
+function setSaveLoading(loading) {
+  // 保存请求未完成前禁用按钮，避免重复提交同一份 API 定义。
+  state.saving = Boolean(loading);
+  els.saveBtn.disabled = state.saving;
+  els.saveBtn.classList.toggle("loading", state.saving);
+  els.saveBtn.textContent = state.saving ? "保存中..." : "保存";
+}
+
+function setButtonLoading(button, loading, text) {
+  if (!button) return;
+  if (!button.dataset.defaultText) button.dataset.defaultText = button.textContent;
+  button.disabled = Boolean(loading);
+  button.classList.toggle("loading", Boolean(loading));
+  button.textContent = loading ? text : button.dataset.defaultText;
+}
+
 function showLog(value) {
   els.logBox.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+function buildSqlTestDisplay(data) {
+  if (data && data.directReturn) return data.result === undefined ? null : data.result;
+  const resultSets = Array.isArray(data && data.resultSets) ? data.resultSets : [];
+  if (resultSets.length > 1) {
+    return resultSets.map((item) => Array.isArray(item.rows) ? item.rows : []);
+  }
+  return Array.isArray(data && data.rows) ? data.rows : [];
+}
+
+function selectedLineRange(editor) {
+  const from = editor.getCursor("from");
+  const to = editor.getCursor("to");
+  return {
+    fromLine: from.line,
+    toLine: to.ch === 0 && to.line > from.line ? to.line - 1 : to.line
+  };
+}
+
+function toggleLineComment(editor, commentToken) {
+  if (!commentToken) {
+    showToast("当前编辑器不支持注释", "error");
+    return;
+  }
+  const range = selectedLineRange(editor);
+  const lines = [];
+  for (let lineNo = range.fromLine; lineNo <= range.toLine; lineNo += 1) {
+    const line = editor.getLine(lineNo);
+    if (line.trim()) lines.push({ lineNo, line });
+  }
+  if (lines.length === 0) return;
+
+  const everyCommented = lines.every(({ line }) => line.trimStart().startsWith(commentToken.trim()));
+  editor.operation(() => {
+    for (const { lineNo, line } of lines) {
+      const indentLength = line.match(/^\s*/)[0].length;
+      if (everyCommented) {
+        const contentStart = line.slice(indentLength);
+        const tokenText = commentToken.trim();
+        if (!contentStart.startsWith(tokenText)) continue;
+        let removeLength = tokenText.length;
+        if (contentStart[removeLength] === " ") removeLength += 1;
+        editor.replaceRange("", CodeMirror.Pos(lineNo, indentLength), CodeMirror.Pos(lineNo, indentLength + removeLength));
+      } else {
+        editor.replaceRange(commentToken, CodeMirror.Pos(lineNo, indentLength));
+      }
+    }
+  });
+}
+
+function formatJsonEditor(editor) {
+  const value = JSON.parse(editor.getValue() || "{}");
+  editor.setValue(JSON.stringify(value, null, 2));
+}
+
+function formatSqlText(text) {
+  const keywords = [
+    "select", "from", "where", "left join", "right join", "inner join", "join", "on",
+    "group by", "order by", "having", "limit", "union", "insert into", "update", "delete from", "values", "set"
+  ];
+  let output = text.replace(/\s+/g, " ").trim();
+  for (const keyword of keywords) {
+    const pattern = new RegExp(`\\s+(${keyword.replace(/\s+/g, "\\s+")})\\b`, "ig");
+    output = output.replace(pattern, "\n$1");
+  }
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatXmlText(text) {
+  // MyBatis XML 只做标签层级缩进，不解析表达式，避免改动 test 条件中的业务逻辑。
+  const compact = text
+    .replace(/\r\n/g, "\n")
+    .replace(/>\s+</g, "><")
+    .replace(/</g, "\n<")
+    .replace(/>/g, ">\n");
+  let indent = 0;
+  return compact
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const closing = /^<\//.test(line);
+      const selfClosing = /\/>$/.test(line) || /^<!(?:--|\[CDATA\[)/.test(line);
+      if (closing) indent = Math.max(0, indent - 1);
+      const formatted = `${"  ".repeat(indent)}${line}`;
+      if (!closing && !selfClosing && /^<[^!?][^>]*>$/.test(line)) indent += 1;
+      return formatted;
+    })
+    .join("\n");
+}
+
+function formatJsText(text) {
+  // 轻量 JS 格式化只调整缩进和括号换行；复杂场景后续应接入 Prettier/Monaco。
+  const normalized = text
+    .replace(/\r\n/g, "\n")
+    .replace(/([{}])/g, "\n$1\n")
+    .replace(/;\s*/g, ";\n");
+  let indent = 0;
+  return normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      if (/^[}\])]/.test(line)) indent = Math.max(0, indent - 1);
+      const formatted = `${"  ".repeat(indent)}${line}`;
+      if (/[{[(]$/.test(line)) indent += 1;
+      return formatted;
+    })
+    .join("\n");
+}
+
+async function formatEditor(editor, formatter) {
+  if (typeof formatter !== "function") {
+    showToast("当前编辑器不支持格式化", "error");
+    return null;
+  }
+  const result = await formatter(editor);
+  syncAutoHeightEditor(editor);
+  showToast(result && result.skipped ? "格式化失败，已保留原内容" : "格式化完成", result && result.skipped ? "error" : "success");
+  return result;
+}
+
+function formatSqlEditor(editor) {
+  editor.setValue(formatSqlText(editor.getValue()));
+}
+
+function formatXmlEditor(editor) {
+  editor.setValue(formatXmlText(editor.getValue()));
+}
+
+function formatScriptEditor(editor) {
+  editor.setValue(formatJsText(editor.getValue()));
+}
+
+async function formatRemoteEditor(editor, payload) {
+  const result = await request("/admin/format-code", {
+    method: "POST",
+    body: JSON.stringify({
+      text: editor.getValue(),
+      ...payload
+    })
+  });
+  if (!result.skipped) {
+    editor.setValue(result.text || "");
+  }
+  return result;
+}
+
+async function formatJsonRemoteEditor(editor) {
+  return formatRemoteEditor(editor, { language: "json" });
+}
+
+async function formatScriptRemoteEditor(editor) {
+  return formatRemoteEditor(editor, { language: "javascript" });
+}
+
+async function formatSqlAutoEditor(editor) {
+  const result = await formatRemoteEditor(editor, {
+    language: "sql",
+    sqlMode: "auto",
+    dialect: "mysql"
+  });
+  els.sqlModeInput.value = result.kind === "xml" ? "xml" : "sql";
+  applySqlEditorMode();
+  if (result.warning) {
+    showStatus(result.warning);
+  } else {
+    showStatus(result.kind === "xml" ? "已按 MyBatis XML 格式化" : "已按原生 SQL 格式化");
+  }
+  return result;
+}
+
+function readScriptCapabilities() {
+  // 能力按 API 单独授权；未勾选时脚本里的同名方法会被后端拒绝。
+  return scriptCapabilityDefinitions
+    .filter((capability) => {
+      const input = document.querySelector(`input[name="scriptCapability"][value="${capability.name}"]`);
+      return input && input.checked;
+    })
+    .map((capability) => capability.name);
+}
+
+function fillScriptCapabilities(capabilities) {
+  const allowed = new Set(Array.isArray(capabilities) ? capabilities : []);
+  for (const capability of scriptCapabilityDefinitions) {
+    const input = document.querySelector(`input[name="scriptCapability"][value="${capability.name}"]`);
+    if (input) input.checked = allowed.has(capability.name);
+  }
+  renderScriptCapabilitySummary();
+}
+
+function renderScriptCapabilitySummary() {
+  els.capabilitySummary.innerHTML = "";
+  const selected = readScriptCapabilities();
+  if (selected.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "capability-empty";
+    empty.textContent = "未选择脚本能力";
+    els.capabilitySummary.appendChild(empty);
+    return;
+  }
+
+  for (const name of selected) {
+    const definition = scriptCapabilityDefinitions.find((item) => item.name === name);
+    const chip = document.createElement("span");
+    chip.className = "capability-chip";
+    chip.textContent = definition ? definition.label : name;
+    els.capabilitySummary.appendChild(chip);
+  }
+}
+
+function openCapabilityModal() {
+  state.capabilityModalSnapshot = readScriptCapabilities();
+  els.capabilityModal.classList.remove("hidden");
+}
+
+function closeCapabilityModal(options = {}) {
+  if (options.restore) fillScriptCapabilities(state.capabilityModalSnapshot);
+  els.capabilityModal.classList.add("hidden");
 }
 
 function setSqlHelpType(type) {
@@ -144,6 +524,52 @@ function sqlResultCacheKey(api) {
   // SQL 结果缓存按 API 名称隔离，用于刷新页面后保留 rows 字段提示。
   const name = String(api && api.name || "").trim();
   return name ? `${sqlResultCachePrefix}${encodeURIComponent(name)}` : null;
+}
+
+function apiInfoCollapseKey(api) {
+  // 接口信息区折叠状态按 API id 保存；未保存的新 API 没有稳定 id，因此不持久化。
+  const id = String(api && api.id || "").trim();
+  return id ? `${apiInfoCollapsePrefix}${encodeURIComponent(id)}` : null;
+}
+
+function isApiInfoCollapsed() {
+  return els.apiInfoGrid.classList.contains("hidden");
+}
+
+function readApiInfoCollapsed(api) {
+  const key = apiInfoCollapseKey(api);
+  if (!key) return false;
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch (error) {
+    return false;
+  }
+}
+
+function saveApiInfoCollapsed(api, collapsed) {
+  const key = apiInfoCollapseKey(api);
+  if (!key) return;
+  try {
+    if (collapsed) localStorage.setItem(key, "1");
+    else localStorage.removeItem(key);
+  } catch (error) {
+    showStatus(`接口信息显示状态保存失败: ${error.message}`);
+  }
+}
+
+function setApiInfoCollapsed(collapsed, options = {}) {
+  const shouldCollapse = Boolean(collapsed);
+  els.apiInfoGrid.classList.toggle("hidden", shouldCollapse);
+  els.apiInfoToggleBtn.textContent = shouldCollapse ? "⌄" : "⌃";
+  els.apiInfoToggleBtn.title = shouldCollapse ? "显示接口信息" : "隐藏接口信息";
+  els.apiInfoToggleBtn.setAttribute("aria-label", els.apiInfoToggleBtn.title);
+  els.apiInfoToggleBtn.setAttribute("aria-expanded", String(!shouldCollapse));
+  if (options.persist !== false) saveApiInfoCollapsed(state.current, shouldCollapse);
+}
+
+function applyApiInfoCollapsed(api, options = {}) {
+  const collapsed = options.collapsed ?? readApiInfoCollapsed(api);
+  setApiInfoCollapsed(collapsed, { persist: false });
 }
 
 function loadCachedSqlResult(api) {
@@ -186,7 +612,7 @@ function applyCachedSqlResult(api) {
   const cached = loadCachedSqlResult(api);
   if (!cached) {
     updateRowFields([]);
-    showLog("等待执行 SQL");
+    showLog("等待测试 SQL");
     return;
   }
 
@@ -572,6 +998,66 @@ function collectObjectLiteralVariables(code) {
   return variables;
 }
 
+function maskIgnoredCode(code) {
+  // 变量来源分析只看真实代码；字符串和注释用空格占位，保持索引位置稳定。
+  let output = "";
+  let i = 0;
+  while (i < code.length) {
+    const char = code[i];
+    if (char === "\"" || char === "'" || char === "`") {
+      const end = skipQuoted(code, i, char);
+      output += " ".repeat(end - i);
+      i = end;
+      continue;
+    }
+    if (char === "/" && code[i + 1] === "/") {
+      const end = skipLineComment(code, i);
+      output += " ".repeat(end - i);
+      i = end;
+      continue;
+    }
+    if (char === "/" && code[i + 1] === "*") {
+      const end = skipBlockComment(code, i);
+      output += " ".repeat(end - i);
+      i = end;
+      continue;
+    }
+    output += char;
+    i += 1;
+  }
+  return output;
+}
+
+function collectCapabilityReturnVariables(code) {
+  // 识别 const/let/var 或普通赋值中来自已知能力方法的返回值，为变量点号补全提供字段。
+  const safeCode = maskIgnoredCode(code);
+  const matches = [];
+  const methodNames = Object.keys(capabilityReturnSchemas)
+    .map((name) => name.replace(".", "\\."))
+    .join("|");
+  const declarationPattern = new RegExp(`\\b(?:const|let|var)\\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\\s*=\\s*(?:await\\s+)?(${methodNames})\\s*\\(`, "g");
+  const assignmentPattern = new RegExp(`(?:^|[;\\n])\\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\\s*=\\s*(?:await\\s+)?(${methodNames})\\s*\\(`, "g");
+
+  for (const pattern of [declarationPattern, assignmentPattern]) {
+    let match = pattern.exec(safeCode);
+    while (match) {
+      matches.push({
+        index: match.index,
+        variableName: match[1],
+        schema: capabilityReturnSchemas[match[2]]
+      });
+      match = pattern.exec(safeCode);
+    }
+  }
+
+  return matches
+    .sort((left, right) => left.index - right.index)
+    .reduce((variables, match) => {
+      variables[match.variableName] = match.schema;
+      return variables;
+    }, {});
+}
+
 function resolveObjectPath(variables, objectPath) {
   // 支持 obj.child.deep 这种嵌套路径，找不到时交给 CodeMirror 原生补全。
   const parts = objectPath.split(".");
@@ -584,14 +1070,17 @@ function resolveObjectPath(variables, objectPath) {
 }
 
 function localObjectPropertyHint(editor, cursor, line) {
-  // 当光标位于 obj. 或 obj.prefix 后面时，返回对象字面量中的属性列表。
+  // 当光标位于 obj. 或 obj.prefix 后面时，返回对象字面量或能力返回值中的属性列表。
   const propertyMatch = line.match(/([a-zA-Z_$][a-zA-Z0-9_$]*(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)*)\.([a-zA-Z_$][a-zA-Z0-9_$]*)?$/);
   if (!propertyMatch) return null;
 
   const objectPath = propertyMatch[1];
   const prefix = propertyMatch[2] || "";
   const codeBeforeCursor = editor.getRange(CodeMirror.Pos(0, 0), cursor);
-  const variables = collectObjectLiteralVariables(codeBeforeCursor);
+  const variables = {
+    ...collectObjectLiteralVariables(codeBeforeCursor),
+    ...collectCapabilityReturnVariables(codeBeforeCursor)
+  };
   const objectNode = resolveObjectPath(variables, objectPath);
   if (!objectNode) return null;
 
@@ -619,6 +1108,90 @@ async function request(path, options = {}) {
   return data.data;
 }
 
+function runEditorAction(action) {
+  Promise.resolve()
+    .then(action)
+    .catch((error) => {
+      showStatus(`操作失败: ${error.message}`);
+      showToast(`操作失败: ${error.message}`, "error");
+    });
+}
+
+function closeEditorContextMenu() {
+  if (!state.editorContextMenu) return;
+  state.editorContextMenu.remove();
+  state.editorContextMenu = null;
+}
+
+function showEditorContextMenu(event, editor, items) {
+  closeEditorContextMenu();
+  if (!Array.isArray(items) || items.length === 0) return;
+  event.preventDefault();
+
+  const menu = document.createElement("div");
+  menu.className = "editor-context-menu";
+  for (const item of items) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = item.label;
+    button.addEventListener("click", () => {
+      closeEditorContextMenu();
+      runEditorAction(() => item.action(editor));
+    });
+    menu.appendChild(button);
+  }
+
+  document.body.appendChild(menu);
+  const rect = menu.getBoundingClientRect();
+  const left = Math.min(event.clientX, window.innerWidth - rect.width - 8);
+  const top = Math.min(event.clientY, window.innerHeight - rect.height - 8);
+  menu.style.left = `${Math.max(8, left)}px`;
+  menu.style.top = `${Math.max(8, top)}px`;
+  state.editorContextMenu = menu;
+}
+
+function setupEditorContextMenu(editor, items) {
+  // CodeMirror 没有内置业务菜单；这里只在编辑区拦截右键，页面其他位置保留浏览器菜单。
+  if (!Array.isArray(items) || items.length === 0) return;
+  editor.getWrapperElement().addEventListener("contextmenu", (event) => {
+    showEditorContextMenu(event, editor, items);
+  });
+}
+
+function syncAutoHeightEditor(editor) {
+  if (!editor || !editor.getWrapperElement().classList.contains("auto-height-editor")) return;
+  const wrapper = editor.getWrapperElement();
+  const minHeight = Number(wrapper.dataset.minHeight || 0);
+  const scroller = wrapper.querySelector(".CodeMirror-scroll");
+  const sizer = wrapper.querySelector(".CodeMirror-sizer");
+  if (!scroller || !sizer) return;
+  // 先清空固定高度再读内容高度，避免删除行后编辑器无法回缩到最小高度。
+  editor.setSize(null, "auto");
+  const nextHeight = Math.max(minHeight, sizer.scrollHeight + 12);
+  editor.setSize(null, `${nextHeight}px`);
+  scroller.style.minHeight = `${minHeight}px`;
+}
+
+function setupAutoHeightEditor(editor, minHeight) {
+  // SQL/JS 内容经常是完整脚本或长 SQL，按内容展开可避免内部滚动隐藏后续内容。
+  const wrapper = editor.getWrapperElement();
+  wrapper.classList.add("auto-height-editor");
+  wrapper.dataset.minHeight = String(minHeight);
+  editor.on("changes", () => {
+    window.requestAnimationFrame(() => syncAutoHeightEditor(editor));
+  });
+  window.requestAnimationFrame(() => syncAutoHeightEditor(editor));
+}
+
+function setupEditorContextMenuLifecycle() {
+  document.addEventListener("click", closeEditorContextMenu);
+  window.addEventListener("resize", closeEditorContextMenu);
+  document.addEventListener("scroll", closeEditorContextMenu, true);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeEditorContextMenu();
+  });
+}
+
 function createCodeMirror(input, options) {
   // 所有编辑器共用基础快捷键和样式，具体语言配置由调用方覆盖。
   const extraKeys = {
@@ -631,10 +1204,15 @@ function createCodeMirror(input, options) {
     },
     "Shift-Tab": (editor) => editor.indentSelection("subtract"),
     "Ctrl-Space": (editor) => editor.showHint(),
+    "Cmd-Space": (editor) => editor.showHint(),
+    "Ctrl-S": () => runEditorAction(() => saveApi()),
+    "Cmd-S": () => runEditorAction(() => saveApi()),
+    "Ctrl-/": (editor) => toggleLineComment(editor, options.lineComment),
+    "Cmd-/": (editor) => toggleLineComment(editor, options.lineComment),
     ...(options.extraKeys || {})
   };
 
-  return CodeMirror.fromTextArea(input, {
+  const editor = CodeMirror.fromTextArea(input, {
     theme: "eclipse",
     lineNumbers: true,
     lineWrapping: true,
@@ -648,6 +1226,8 @@ function createCodeMirror(input, options) {
     ...options,
     extraKeys
   });
+  setupEditorContextMenu(editor, options.contextMenuItems || []);
+  return editor;
 }
 
 function registerSqlParamMode() {
@@ -749,45 +1329,98 @@ function applySqlEditorMode() {
   if (!state.editors.sql) return;
   state.editors.sql.setOption("mode", els.sqlModeInput.value === "xml" ? "ssql-mybatis-xml" : "ssql-mysql");
   state.editors.sql.refresh();
+  syncAutoHeightEditor(state.editors.sql);
+}
+
+function buildHintResult(cursor, prefix, items, fromCh = cursor.ch - prefix.length) {
+  const normalized = items.map((item) => typeof item === "string" ? { text: item, displayText: item } : item);
+  const list = normalized.filter((item) => {
+    const label = item.displayText || item.text || "";
+    return label.startsWith(prefix);
+  });
+  return {
+    list,
+    from: CodeMirror.Pos(cursor.line, fromCh),
+    to: cursor
+  };
+}
+
+function headerBracketHint(cursor, quote, prefix) {
+  // HTTP 头常带短横线，优先补成 headers["content-type"] 这种合法访问形式。
+  const items = commonHeaderNames.map((name) => ({
+    text: `${name}${quote}]`,
+    displayText: name
+  }));
+  return buildHintResult(cursor, prefix, items);
+}
+
+function headerDotHint(cursor, prefix) {
+  const items = commonHeaderNames.map((name) => ({
+    text: name.includes("-") ? `["${name}"]` : `.${name}`,
+    displayText: name
+  }));
+  return buildHintResult(cursor, prefix, items, cursor.ch - prefix.length - 1);
 }
 
 function customFieldHint(editor) {
-  // JS 编辑器补全顺序：SQL 行字段、示例参数、本地对象字面量、运行时全局变量、原生提示。
+  // JS 编辑器补全顺序：具体运行时对象路径、示例参数、本地对象字面量、运行时全局变量、原生提示。
   const cursor = editor.getCursor();
   const line = editor.getLine(cursor.line).slice(0, cursor.ch);
+  const resultSetRowMatch = line.match(/resultSets\s*\[\s*\d+\s*\]\.rows\s*\[\s*\d+\s*\]\.([a-zA-Z0-9_]*)$/);
+  const resultSetMatch = line.match(/resultSets\s*\[\s*\d+\s*\]\.([a-zA-Z0-9_]*)$/);
+  const resultSetsMatch = line.match(/resultSets\.([a-zA-Z0-9_]*)$/);
+  const resultArrayMatch = line.match(/(?:resultSets|resultSets\s*\[\s*\d+\s*\]\.(?:rows|fields)|context\.(?:roles|callChain))\.([a-zA-Z0-9_]*)$/);
   const rowMatch = line.match(/(?:rows\s*\[\s*\d+\s*\]|row)\.([a-zA-Z0-9_]*)$/);
   const paramsMatch = line.match(/params\.([a-zA-Z0-9_]*)$/);
+  const contextMatch = line.match(/context\.([a-zA-Z0-9_]*)$/);
+  const headersBracketMatch = line.match(/headers\[\s*(["'])([^"']*)$/);
+  const headersDotMatch = line.match(/headers\.([a-zA-Z0-9_-]*)$/);
   const callApiMatch = line.match(/callApi\.([a-zA-Z0-9_]*)$/);
+  const filesMatch = line.match(/files\.([a-zA-Z0-9_]*)$/);
   const wordMatch = line.match(/([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
 
+  if (resultSetRowMatch) {
+    return buildHintResult(cursor, resultSetRowMatch[1], state.rowFields);
+  }
+
+  if (resultSetMatch) {
+    return buildHintResult(cursor, resultSetMatch[1], resultSetHintFields);
+  }
+
+  if (resultArrayMatch) {
+    return buildHintResult(cursor, resultArrayMatch[1], arrayHintFields);
+  }
+
+  if (resultSetsMatch) {
+    return buildHintResult(cursor, resultSetsMatch[1], arrayHintFields);
+  }
+
   if (rowMatch) {
-    const prefix = rowMatch[1];
-    const list = state.rowFields.filter((field) => field.startsWith(prefix));
-    return {
-      list,
-      from: CodeMirror.Pos(cursor.line, cursor.ch - prefix.length),
-      to: cursor
-    };
+    return buildHintResult(cursor, rowMatch[1], state.rowFields);
   }
 
   if (paramsMatch) {
-    const prefix = paramsMatch[1];
-    const list = getParamFields().filter((field) => field.startsWith(prefix));
-    return {
-      list,
-      from: CodeMirror.Pos(cursor.line, cursor.ch - prefix.length),
-      to: cursor
-    };
+    return buildHintResult(cursor, paramsMatch[1], getParamFields());
+  }
+
+  if (contextMatch) {
+    return buildHintResult(cursor, contextMatch[1], contextHintFields);
+  }
+
+  if (headersBracketMatch) {
+    return headerBracketHint(cursor, headersBracketMatch[1], headersBracketMatch[2]);
+  }
+
+  if (headersDotMatch) {
+    return headerDotHint(cursor, headersDotMatch[1]);
   }
 
   if (callApiMatch) {
-    const prefix = callApiMatch[1];
-    const list = ["get", "post"].filter((field) => field.startsWith(prefix));
-    return {
-      list,
-      from: CodeMirror.Pos(cursor.line, cursor.ch - prefix.length),
-      to: cursor
-    };
+    return buildHintResult(cursor, callApiMatch[1], ["get", "post", "tryGet", "tryPost"]);
+  }
+
+  if (filesMatch) {
+    return buildHintResult(cursor, filesMatch[1], ["inspectUrl", "downloadTemp", "tryInspectUrl", "tryDownloadTemp"]);
   }
 
   const objectHint = localObjectPropertyHint(editor, cursor, line);
@@ -795,7 +1428,7 @@ function customFieldHint(editor) {
 
   if (wordMatch) {
     const prefix = wordMatch[1];
-    const globals = ["params", "rows", "resultSets", "row", "headers", "context", "callApi"];
+    const globals = ["params", "rows", "resultSets", "row", "headers", "context", "callApi", "files"];
     const list = globals.filter((item) => item.startsWith(prefix));
     if (list.length > 0) {
       return {
@@ -828,6 +1461,7 @@ function setScriptType(type) {
   els.scriptTypeInput.value = state.scriptType;
   state.editors.script.setValue(state.scriptDrafts[state.scriptType] || "");
   state.editors.script.refresh();
+  syncAutoHeightEditor(state.editors.script);
 }
 
 function setupEditors() {
@@ -838,33 +1472,62 @@ function setupEditors() {
     mode: {
       name: "javascript",
       json: true
-    }
+    },
+    contextMenuItems: [
+      {
+        label: "格式化 JSON",
+        action: (editor) => formatEditor(editor, formatJsonRemoteEditor)
+      }
+    ]
   });
   state.editors.params.on("change", () => updateParamsEditorValidity());
 
   state.editors.sql = createCodeMirror(els.sqlInput, {
     mode: "ssql-mysql",
+    lineComment: "-- ",
+    contextMenuItems: [
+      {
+        label: "格式化 SQL",
+        action: (editor) => formatEditor(editor, formatSqlAutoEditor)
+      }
+    ],
     hintOptions: {
       disableKeywords: false
+    },
+    extraKeys: {
+      "Ctrl-Enter": () => runEditorAction(runSql),
+      "Cmd-Enter": () => runEditorAction(runSql)
     }
   });
+  setupAutoHeightEditor(state.editors.sql, 240);
   els.sqlModeInput.addEventListener("change", () => {
     applySqlEditorMode();
+    syncAutoHeightEditor(state.editors.sql);
     showStatus(els.sqlModeInput.value === "xml" ? "SQL 输入模式: MyBatis XML" : "SQL 输入模式: 原生 SQL");
   });
 
   state.editors.script = createCodeMirror(els.scriptInput, {
     mode: "javascript",
+    lineComment: "// ",
+    contextMenuItems: [
+      {
+        label: "格式化 JS",
+        action: (editor) => formatEditor(editor, formatScriptRemoteEditor)
+      }
+    ],
     hintOptions: {
       hint: customFieldHint
     },
     extraKeys: {
+      "Ctrl-Enter": () => runEditorAction(runScriptTest),
+      "Cmd-Enter": () => runEditorAction(runScriptTest),
       ".": (editor) => {
         editor.replaceSelection(".", "end");
         setTimeout(() => editor.showHint({ completeSingle: false }), 0);
       }
     }
   });
+  setupAutoHeightEditor(state.editors.script, 300);
   state.editors.script.on("inputRead", maybeShowScriptHint);
   els.scriptTypeInput.addEventListener("change", () => {
     setScriptType(els.scriptTypeInput.value);
@@ -888,7 +1551,8 @@ function readForm() {
     sqlMode: els.sqlModeInput.value,
     sqlText: state.editors.sql.getValue(),
     paramScriptText: state.scriptDrafts.params,
-    scriptText: state.scriptDrafts.result
+    scriptText: state.scriptDrafts.result,
+    scriptCapabilities: readScriptCapabilities()
   };
 }
 
@@ -902,12 +1566,15 @@ function fillForm(api, options = {}) {
   els.statusText.textContent = api.id ? `${api.method} ${api.path} · ${api.status}` : "填写配置后保存";
   els.statusBadge.textContent = formatStatus(api.status);
   els.statusBadge.className = `status-badge status-${api.status || "draft"}`;
+  renderStatusToggle(api);
+  applyApiInfoCollapsed(api);
   els.nameInput.value = api.name || "";
   els.pathInput.value = api.path || "/api/";
   els.methodInput.value = api.method || "GET";
   renderDatabaseOptions(api.databaseAlias || getDefaultDatabaseAlias());
   els.sqlTimeoutInput.value = String(timeoutMsToSeconds(api.sqlTimeoutMs, 5000));
   els.scriptTimeoutInput.value = String(timeoutMsToSeconds(api.scriptTimeoutMs, 1000));
+  fillScriptCapabilities(api.scriptCapabilities);
   els.descriptionInput.value = api.description || "";
   state.editors.params.setValue(JSON.stringify(api.testParams || {}, null, 2));
   state.editors.sql.setValue(api.sqlText || "");
@@ -922,7 +1589,16 @@ function fillForm(api, options = {}) {
   state.editors.params.refresh();
   state.editors.sql.refresh();
   state.editors.script.refresh();
+  syncAutoHeightEditor(state.editors.sql);
+  syncAutoHeightEditor(state.editors.script);
   applyCachedSqlResult(api);
+}
+
+function renderStatusToggle(api) {
+  const status = api && api.status || "draft";
+  const shouldDisable = status === "published";
+  els.statusToggleBtn.textContent = shouldDisable ? "停用" : "发布";
+  els.statusToggleBtn.classList.toggle("primary", !shouldDisable);
 }
 
 function renderList() {
@@ -1017,20 +1693,37 @@ async function loadDatabaseSources() {
   renderDatabaseOptions(state.current?.databaseAlias || state.defaultDatabaseAlias);
 }
 
-async function saveApi() {
+async function saveApi(options = {}) {
   // 已有 id 时更新，否则创建新 API；保存后刷新列表以同步排序和分页信息。
-  const payload = readForm();
-  const api = state.current && state.current.id
-    ? await request(`/admin/apis/${state.current.id}`, { method: "PUT", body: JSON.stringify(payload) })
-    : await request("/admin/apis", { method: "POST", body: JSON.stringify(payload) });
-  fillForm(api, { keepScriptType: true });
-  await loadApis();
-  showStatus(`已保存 · ${api.method} ${api.path} · ${api.status}`);
-  return api;
+  const notify = options.notify !== false;
+  setSaveLoading(true);
+  showStatus("保存中...");
+  try {
+    const payload = readForm();
+    const api = state.current && state.current.id
+      ? await request(`/admin/apis/${state.current.id}`, { method: "PUT", body: JSON.stringify(payload) })
+      : await request("/admin/apis", { method: "POST", body: JSON.stringify(payload) });
+    fillForm(api, { keepScriptType: true });
+    await loadApis();
+    if (notify) {
+      showStatus(`保存完成 · ${api.method} ${api.path} · ${api.status}`);
+      showToast("保存完成");
+    }
+    return api;
+  } catch (error) {
+    if (notify) {
+      showStatus(`保存失败: ${error.message}`);
+      showToast(`保存失败: ${error.message}`, "error");
+      return null;
+    }
+    throw error;
+  } finally {
+    setSaveLoading(false);
+  }
 }
 
 async function runSql() {
-  // 执行 SQL 前先保存当前 API，确保后端测试使用的是最新配置。
+  // 测试 SQL 前先保存当前 API，确保后端测试使用的是最新配置。
   let params = {};
   try {
     params = readParamsEditor();
@@ -1039,42 +1732,89 @@ async function runSql() {
     return;
   }
 
-  const api = await saveApi();
-  showLog("SQL 执行中...");
-  const data = await request(`/admin/apis/${api.id}/test-sql`, {
-    method: "POST",
-    body: JSON.stringify({ params })
-  });
-  const fields = Array.isArray(data.fields) && data.fields.length > 0
-    ? [...new Set(data.fields)].sort()
-    : collectRowFields(data.rows || []);
-  updateRowFields(fields);
-  const logData = {
-    params: data.params,
-    processedParams: data.processedParams,
-    paramScriptResult: data.paramScriptResult,
-    directReturn: Boolean(data.directReturn),
-    total: data.total,
-    rowFields: fields,
-    rows: data.rows,
-    resultSets: data.resultSets || []
-  };
-  saveCachedSqlResult(api, logData);
-  showLog(logData);
-  if (data.directReturn) {
-    showStatus("参数处理脚本已直接返回，未执行 SQL");
-  } else {
-    showStatus(`SQL 执行完成 · ${data.total} 行 · rows ${fields.length} 个字段`);
+  setButtonLoading(els.runSqlBtn, true, "测试中...");
+  try {
+    const api = await saveApi({ notify: false });
+    showLog("SQL 测试中...");
+    const data = await request(`/admin/apis/${api.id}/test-sql`, {
+      method: "POST",
+      body: JSON.stringify({ params })
+    });
+    const fields = Array.isArray(data.fields) && data.fields.length > 0
+      ? [...new Set(data.fields)].sort()
+      : collectRowFields(data.rows || []);
+    updateRowFields(fields);
+    const logData = {
+      params: data.params,
+      processedParams: data.processedParams,
+      paramScriptResult: data.paramScriptResult,
+      directReturn: Boolean(data.directReturn),
+      total: data.total,
+      rowFields: fields,
+      rows: data.rows,
+      resultSets: data.resultSets || []
+    };
+    saveCachedSqlResult(api, logData);
+    showLog(buildSqlTestDisplay(data));
+    if (data.directReturn) {
+      showStatus("参数处理脚本已直接返回，未测试 SQL");
+    } else {
+      showStatus(`SQL 测试完成 · ${data.total} 行 · rows ${fields.length} 个字段`);
+    }
+  } finally {
+    setButtonLoading(els.runSqlBtn, false);
+  }
+}
+
+async function runScriptTest() {
+  // JS 测试复用真实链路：先执行参数处理，再准备 SQL 结果，最后执行结果集处理脚本。
+  let params = {};
+  try {
+    params = readParamsEditor();
+  } catch (error) {
+    showStatus(`示例参数 JSON 无效: ${error.message}`);
+    return;
+  }
+
+  setButtonLoading(els.runScriptBtn, true, "测试中...");
+  try {
+    const api = await saveApi({ notify: false });
+    showLog("JS 测试中...");
+    const data = await request(`/admin/apis/${api.id}/test-script`, {
+      method: "POST",
+      body: JSON.stringify({ params })
+    });
+    const resultSets = data.resultSets || [];
+    const fields = Array.isArray(resultSets[0]?.fields) && resultSets[0].fields.length > 0
+      ? [...new Set(resultSets[0].fields)].sort()
+      : collectRowFields(data.rows || []);
+    updateRowFields(fields);
+    const logData = {
+      params: data.params,
+      processedParams: data.processedParams,
+      paramScriptResult: data.paramScriptResult,
+      directReturn: Boolean(data.directReturn),
+      rowFields: fields,
+      rows: data.rows || [],
+      resultSets,
+      result: data.result
+    };
+    if (!data.directReturn) saveCachedSqlResult(api, logData);
+    showLog(data.result);
+    showStatus(data.directReturn ? "参数处理脚本已直接返回" : `JS 测试完成 · rows ${fields.length} 个字段`);
+  } finally {
+    setButtonLoading(els.runScriptBtn, false);
   }
 }
 
 async function publishApi() {
   // 发布会先保存草稿，再切换状态，避免遗漏编辑器中的未保存修改。
-  const api = await saveApi();
+  const api = await saveApi({ notify: false });
   const published = await request(`/admin/apis/${api.id}/publish`, { method: "POST", body: "{}" });
   fillForm(published);
   await loadApis();
   showStatus(`已发布 · ${published.method} ${published.path}`);
+  showToast("发布完成");
 }
 
 async function disableApi() {
@@ -1083,6 +1823,21 @@ async function disableApi() {
   fillForm(api);
   await loadApis();
   showStatus(`已停用 · ${api.method} ${api.path}`);
+  showToast("停用完成");
+}
+
+async function toggleApiStatus() {
+  const status = state.current && state.current.status || "draft";
+  const shouldDisable = status === "published";
+  const actionText = shouldDisable ? "停用" : "发布";
+  const targetText = shouldDisable ? "停用后外部请求将无法调用该 API。" : "发布前会先保存当前编辑内容。";
+  // 状态切换会影响运行时访问，因此在真正调用后端前让用户确认一次。
+  if (!window.confirm(`确定要${actionText}当前 API 吗？\n${targetText}`)) return;
+  if (shouldDisable) {
+    await disableApi();
+    return;
+  }
+  await publishApi();
 }
 
 function bind(id, fn) {
@@ -1092,7 +1847,35 @@ function bind(id, fn) {
       await fn();
     } catch (error) {
       showStatus(`操作失败: ${error.message}`);
+      showToast(`操作失败: ${error.message}`, "error");
     }
+  });
+}
+
+function setupCapabilityModal() {
+  els.capabilityOpenBtn.addEventListener("click", openCapabilityModal);
+  els.capabilityCloseBtn.addEventListener("click", () => closeCapabilityModal({ restore: true }));
+  els.capabilityCancelBtn.addEventListener("click", () => closeCapabilityModal({ restore: true }));
+  els.capabilityApplyBtn.addEventListener("click", () => {
+    renderScriptCapabilitySummary();
+    closeCapabilityModal();
+    showToast("脚本能力已更新");
+  });
+  els.capabilityModal.addEventListener("click", (event) => {
+    if (event.target === els.capabilityModal) closeCapabilityModal({ restore: true });
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.capabilityModal.classList.contains("hidden")) {
+      closeCapabilityModal({ restore: true });
+    }
+  });
+}
+
+function setupApiInfoCollapse() {
+  els.apiInfoToggleBtn.addEventListener("click", () => {
+    const collapsed = !isApiInfoCollapsed();
+    setApiInfoCollapsed(collapsed);
+    showStatus(collapsed ? "接口信息已隐藏" : "接口信息已显示");
   });
 }
 
@@ -1122,6 +1905,7 @@ els.newApiBtn.addEventListener("click", () => {
     databaseAlias: getDefaultDatabaseAlias(),
     sqlTimeoutMs: 5000,
     scriptTimeoutMs: 1000,
+    scriptCapabilities: [],
     status: "draft",
     testParams: {},
     sqlMode: "sql",
@@ -1176,11 +1960,14 @@ els.nextPageBtn.addEventListener("click", async () => {
 
 setupEditors();
 setupHelp();
+setupCapabilityModal();
+setupApiInfoCollapse();
+setupEditorContextMenuLifecycle();
 
 bind(els.saveBtn, saveApi);
-bind(els.publishBtn, publishApi);
-bind(els.disableBtn, disableApi);
+bind(els.statusToggleBtn, toggleApiStatus);
 bind(els.runSqlBtn, runSql);
+bind(els.runScriptBtn, runScriptTest);
 
 loadDatabaseSources()
   .then(() => loadApis())

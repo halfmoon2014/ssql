@@ -1,0 +1,42 @@
+{
+  // 服务监听配置。临时覆盖可使用 PORT / HOST 环境变量。
+  "server": {
+    "port": 3010,
+    "host": "0.0.0.0"
+  },
+
+  // 项目内相对路径会按仓库根目录解析。
+  "paths": {
+    "dataDir": "data",
+    "publicDir": "public"
+  },
+
+  // 默认执行超时；API 自身配置优先于这里的默认值。
+  "timeouts": {
+    "scriptMs": 1000,
+    "sqlMs": 5000
+  },
+
+  "runtime": {
+    // callApi 内部调用最大深度，防止循环或过深调用链。
+    "maxCallDepth": 5,
+    "scriptWorker": {
+      // JS Worker 内存限制，保护主进程；大结果集场景可适当调高。
+      "maxOldGenerationSizeMb": 32,
+      "maxYoungGenerationSizeMb": 8
+    }
+  },
+
+  "capabilities": {
+    "files": {
+      // 文件 capability 的受控下载目录和网络访问边界。
+      "tempDir": "data/downloads",
+      "maxBytes": 10485760,
+      "timeoutMs": 5000,
+      "maxRedirects": 3,
+      "allowedProtocols": ["http:"],
+      "allowedHosts": [],
+      "allowPrivateNetwork": false
+    }
+  }
+}

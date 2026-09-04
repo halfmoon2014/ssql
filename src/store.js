@@ -3,6 +3,7 @@ const path = require("path");
 const { randomUUID } = require("crypto");
 const mysql = require("mysql2/promise");
 const { AppError } = require("./errors");
+const { normalizeScriptCapabilities } = require("./capabilities");
 const { formatChinaTime } = require("./time");
 
 function now() {
@@ -88,6 +89,7 @@ class Store {
         script_text mediumtext,
         sql_timeout_ms int not null default 5000,
         script_timeout_ms int not null default 1000,
+        script_capabilities longtext,
         deleted_at varchar(32) null,
         created_at varchar(32) not null,
         updated_at varchar(32) not null,
@@ -162,6 +164,17 @@ class Store {
       if (this.logger) this.logger.info("mysql schema migrated", { table: "ssql_api_definitions", column: "database_alias" });
     }
 
+    const [scriptCapabilitiesRows] = await this.pool.execute(
+      `select count(*) as count
+       from information_schema.columns
+       where table_schema = ? and table_name = 'ssql_api_definitions' and column_name = 'script_capabilities'`,
+      [this.database.database]
+    );
+    if (Number(scriptCapabilitiesRows[0].count) === 0) {
+      await this.pool.execute("alter table ssql_api_definitions add column script_capabilities longtext after script_timeout_ms");
+      if (this.logger) this.logger.info("mysql schema migrated", { table: "ssql_api_definitions", column: "script_capabilities" });
+    }
+
   }
 
   async migrateJsonApis() {
@@ -206,6 +219,7 @@ class Store {
       scriptText: row.script_text || "",
       sqlTimeoutMs: Number(row.sql_timeout_ms || 5000),
       scriptTimeoutMs: Number(row.script_timeout_ms || 1000),
+      scriptCapabilities: normalizeScriptCapabilities(fromJson(row.script_capabilities, [])),
       deletedAt: row.deleted_at || null,
       createdAt: row.created_at,
       updatedAt: row.updated_at
@@ -255,6 +269,7 @@ class Store {
       scriptText: String(payload.scriptText || existing.scriptText || ""),
       sqlTimeoutMs: Number(payload.sqlTimeoutMs || existing.sqlTimeoutMs || 5000),
       scriptTimeoutMs: Number(payload.scriptTimeoutMs || existing.scriptTimeoutMs || 1000),
+      scriptCapabilities: normalizeScriptCapabilities(payload.scriptCapabilities, existing.scriptCapabilities || []),
       deletedAt: payload.deletedAt === undefined ? existing.deletedAt || null : payload.deletedAt,
       createdAt: existing.createdAt || payload.createdAt || now(),
       updatedAt: now()
@@ -344,8 +359,8 @@ class Store {
       `insert into ssql_api_definitions (
         id, name, path, method, status, description, request_params, test_params,
         database_alias, sql_text, sql_mode, param_script_text, script_text, sql_timeout_ms, script_timeout_ms,
-        deleted_at, created_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        script_capabilities, deleted_at, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         api.id,
         api.name,
@@ -362,6 +377,7 @@ class Store {
         api.scriptText,
         api.sqlTimeoutMs,
         api.scriptTimeoutMs,
+        toJson(api.scriptCapabilities, []),
         api.deletedAt,
         api.createdAt,
         api.updatedAt
@@ -400,6 +416,7 @@ class Store {
            script_text = ?,
            sql_timeout_ms = ?,
            script_timeout_ms = ?,
+           script_capabilities = ?,
            deleted_at = ?,
            updated_at = ?
        where id = ?`,
@@ -418,6 +435,7 @@ class Store {
         api.scriptText,
         api.sqlTimeoutMs,
         api.scriptTimeoutMs,
+        toJson(api.scriptCapabilities, []),
         api.deletedAt,
         api.updatedAt,
         id

@@ -40,6 +40,47 @@
 
 当前支持的 `type` 是 `mysql` 和 `mssql`。后续扩展其它数据库时，需要补对应驱动、占位符编译规则和执行器。
 
+## 运行配置 Demo
+
+`app.config.jsonc` 保存服务监听、运行超时、目录和 capability 默认策略，支持 `//` 和 `/* */` 注释。部署时可以直接修改该文件；同名环境变量仍可作为临时覆盖。
+
+```jsonc
+{
+  // 服务监听配置。临时覆盖可使用 PORT / HOST 环境变量。
+  "server": {
+    "port": 3010,
+    "host": "0.0.0.0"
+  },
+  // 项目内相对路径会按仓库根目录解析。
+  "paths": {
+    "dataDir": "data",
+    "publicDir": "public"
+  },
+  "timeouts": {
+    "scriptMs": 1000,
+    "sqlMs": 5000
+  },
+  "runtime": {
+    "maxCallDepth": 5,
+    "scriptWorker": {
+      "maxOldGenerationSizeMb": 32,
+      "maxYoungGenerationSizeMb": 8
+    }
+  },
+  "capabilities": {
+    "files": {
+      "tempDir": "data/downloads",
+      "maxBytes": 10485760,
+      "timeoutMs": 5000,
+      "maxRedirects": 3,
+      "allowedProtocols": ["https:"],
+      "allowedHosts": [],
+      "allowPrivateNetwork": false
+    }
+  }
+}
+```
+
 ## 1. 需求
 
 开发一个 Web 程序，用于创建和管理 API 列表。每个 API 支持通过 SQL 查询数据，并支持使用 JS 在 SQL 前处理入参、在 SQL 后处理结果集。API 内部可以调用其它 API。
@@ -141,12 +182,76 @@ JS 脚本的 `main()` 函数只接收 1 个对象入参，对象中包含以下 
 - `rows`: SQL 第一个结果集的行数组；参数处理阶段还没有执行 SQL，因此固定为空数组。
 - `resultSets`: SQL 返回的全部结果集，格式为 `[{ fields, rows }]`；参数处理阶段固定为空数组，结果集处理阶段推荐直接 `return resultSets` 返回多结果集。
 - `context`: 当前请求上下文，包含 `requestId`、`userId`、`roles`、`callDepth`、`callChain` 等可序列化信息。
-- `callApi`: 内部 API 调用对象，使用 `await callApi.get("/api/xxx", { id: 1 })` 或 `await callApi.post("/api/xxx", { id: 1 })`。
+- `callApi`: 内部 API 调用对象，使用 `await callApi.get("/api/xxx", { id: 1 })` 或 `await callApi.post("/api/xxx", { id: 1 })`。需要自行处理失败时，可使用 `callApi.tryGet()` 或 `callApi.tryPost()`。
+- `files`: 文件能力对象。API 勾选对应脚本能力后，可使用 `await files.inspectUrl(url)` 探测网络文件大小，或使用 `await files.downloadTemp(url)` 下载到受控临时目录并返回文件大小。需要自行处理失败时，可使用 `files.tryInspectUrl()` 或 `files.tryDownloadTemp()`。
 
 参数处理脚本和结果集处理脚本使用同一套入参结构，但运行时机不同:
 
 - `1 参数处理`: 在 SQL 前执行，此时 `rows` 和 `resultSets` 都为空；返回普通对象或 `{ params: {...} }` 会继续执行 SQL；返回 `{ directReturn: true, data: ... }` 会跳过 SQL 和结果集处理，直接把 `data` 作为 API 响应。
 - `2 结果集处理`: 在 SQL 后执行，此时可以读取 `rows` 和 `resultSets`；返回值就是动态 API 的最终响应体。
+
+文件能力示例:
+
+```js
+async function main({ params, files }) {
+  const result = await files.tryInspectUrl(params.url);
+  if (!result.ok) {
+    return {
+      code: result.error.code,
+      message: result.error.message
+    };
+  }
+  const info = result.data;
+  return {
+    url: info.url,
+    contentType: info.contentType,
+    size: info.size
+  };
+}
+```
+
+文件能力必须在 API 的 `scriptCapabilities` 中显式授权:
+
+```json
+["files.inspectUrl", "files.downloadTemp"]
+```
+
+文件能力默认策略配置在 `app.config.jsonc` 的 `capabilities.files` 中；部署时可通过环境变量临时覆盖:
+
+- `FILE_CAPABILITY_ALLOWED_PROTOCOLS`: 允许协议，逗号分隔，默认 `https:`。
+- `FILE_CAPABILITY_ALLOWED_HOSTS`: 允许域名，逗号分隔；为空表示不限制公网域名。
+- `FILE_CAPABILITY_ALLOW_PRIVATE_NETWORK`: 设置为 `1` 时允许访问内网地址。
+- `FILE_CAPABILITY_MAX_BYTES`: 最大下载/统计字节数。
+- `FILE_CAPABILITY_TIMEOUT_MS`: 单次网络请求超时。
+- `FILE_CAPABILITY_TEMP_DIR`: 临时下载目录。
+
+`callApi` 和 `files` 的默认方法失败时会抛出 `ScriptCapabilityError`，可在脚本中 `try/catch` 处理。错误对象只包含安全字段:
+
+```js
+{
+  name: "ScriptCapabilityError",
+  capability: "files.inspectUrl",
+  code: "FILE_HOST_NOT_ALLOWED",
+  message: "file capability host is not allowed",
+  statusCode: 403,
+  details: null
+}
+```
+
+`try*` 方法不会抛出能力异常，而是返回稳定结构:
+
+```js
+{
+  "ok": false,
+  "error": {
+    "capability": "files.inspectUrl",
+    "code": "FILE_HOST_NOT_ALLOWED",
+    "message": "file capability host is not allowed",
+    "statusCode": 403,
+    "details": null
+  }
+}
+```
 
 ### 2.7 API 内部调用设计
 
@@ -340,6 +445,7 @@ create table api_definitions (
   description text,
   permission_type varchar(30) not null default 'login',
   required_roles json,
+  script_capabilities json,
   request_params json,
   database_alias varchar(100) not null default 'default',
   response_schema json,
@@ -494,7 +600,7 @@ handleRequest(request):
 用户脚本不直接写完整程序，只需要提供一个 `main` 处理函数。`main()` 只接收 1 个对象入参，当前可解构使用 6 个字段:
 
 ```js
-async function main({ params, headers, rows, resultSets, context, callApi }) {
+async function main({ params, headers, rows, resultSets, context, callApi, files }) {
   return resultSets;
 }
 ```
@@ -506,7 +612,8 @@ async function main({ params, headers, rows, resultSets, context, callApi }) {
 - `rows`: 第一个 SQL 结果集的行数组。SQL 前参数处理阶段固定为 `[]`。
 - `resultSets`: 全部 SQL 结果集，格式为 `[{ fields, rows }]`。多条 `select` 会产生多个结果集。
 - `context`: 请求上下文，常用字段有 `requestId`、`userId`、`roles`、`callDepth`、`callChain`。
-- `callApi`: 内部 API 调用对象，提供 `callApi.get(path, params)` 和 `callApi.post(path, params)`。
+- `callApi`: 内部 API 调用对象，提供 `callApi.get(path, params)`、`callApi.post(path, params)`、`callApi.tryGet(path, params)` 和 `callApi.tryPost(path, params)`。
+- `files`: 文件能力对象，提供 `files.inspectUrl(url, options)`、`files.downloadTemp(url, options)`、`files.tryInspectUrl(url, options)` 和 `files.tryDownloadTemp(url, options)`，只有 API 授权后可用。
 
 参数处理脚本示例:
 
@@ -533,7 +640,7 @@ async function main({ params }) {
 结果集处理脚本同样只需要提供 `main`，默认直接返回全部结果集:
 
 ```js
-async function main({ params, headers, resultSets, context, callApi }) {
+async function main({ params, headers, resultSets, context, callApi, files }) {
   return resultSets;
 }
 ```
@@ -546,7 +653,7 @@ runScript(input):
   create isolate with memory limit
   create context
   inject safe values: params, headers, rows, resultSets, context
-  inject safe object: callApi
+  inject safe object: callApi, files
   wrap user script as async main function
   execute script with timeout
   wait result
@@ -578,6 +685,7 @@ type RunScriptInput = {
     params: Record<string, unknown>,
     options: { method: "GET" | "POST" }
   ) => Promise<unknown>;
+  executeCapability: (name: string, args: Record<string, unknown>) => Promise<unknown>;
   timeoutMs: number;
 };
 
@@ -604,10 +712,18 @@ async function runScript(input: RunScriptInput): Promise<unknown> {
       return input.callApi(path, params, { method: "POST" });
     }
   });
+  sandbox.setValue("files", {
+    inspectUrl: (url, options = {}) => {
+      return input.executeCapability("files.inspectUrl", { url, options });
+    },
+    downloadTemp: (url, options = {}) => {
+      return input.executeCapability("files.downloadTemp", { url, options });
+    }
+  });
 
   const wrappedScript = `
     ${input.script}
-    Promise.resolve(main({ params, headers, rows, resultSets, context, callApi }))
+    Promise.resolve(main({ params, headers, rows, resultSets, context, callApi, files }))
   `;
 
   const result = await sandbox.run(wrappedScript);
@@ -649,6 +765,7 @@ async function runScript(input: RunScriptInput): Promise<unknown> {
 
 - 脚本语法错误返回 `400`。
 - 脚本执行超时返回 `408`。
+- 脚本 Worker 内存超限返回 `507`，可通过 `runtime.scriptWorker` 或 `SCRIPT_WORKER_MAX_OLD_MB`、`SCRIPT_WORKER_MAX_YOUNG_MB` 调整上限。
 - 脚本运行异常返回 `500`。
 - 外部响应只返回脱敏错误信息。
 - 完整错误堆栈只写入服务端日志。
@@ -707,6 +824,7 @@ async function runScript(input: RunScriptInput): Promise<unknown> {
 - `404`: API 不存在。
 - `408`: SQL 或 JS 执行超时。
 - `409`: API 路径冲突或循环调用。
+- `507`: JS Worker 内存超限。
 - `500`: 系统内部错误。
 
 ### 4.14 开发步骤

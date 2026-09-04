@@ -9,6 +9,7 @@ const { executeSqlWithFields } = require("./sqlExecutor");
 const { runScript } = require("./scriptRunner");
 const { ApiRuntime } = require("./runtime");
 const { Logger } = require("./logger");
+const { formatCode } = require("./formatter");
 
 const config = loadConfig();
 const logger = new Logger(config.dataDir);
@@ -149,6 +150,14 @@ async function handleAdmin(req, res, url, body) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/admin/format-code") {
+    // 代码格式化在服务端执行，避免前端加载大型 formatter 包；接口只返回格式化后的文本。
+    const result = await formatCode(body);
+    logger.info("admin code formatted", { language: body.language, kind: result.kind });
+    sendOk(res, result);
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/admin/apis") {
     const query = getQueryParams(url);
     logger.info("admin api list", query);
@@ -266,21 +275,25 @@ async function handleAdmin(req, res, url, body) {
         ? { rows: body.rows, resultSets: [{ fields: [], rows: body.rows }] }
         : await executeSqlWithFields(config.database, api, processed.params);
       const rows = sqlResult.rows;
+      const scriptContext = {
+        requestId: `test-${Date.now()}`,
+        userId: 1,
+        roles: ["admin"],
+        callDepth: 0,
+        callChain: [api.path],
+        scriptType: "result"
+      };
       const result = await runScript({
         script: api.scriptText,
         params: processed.params,
         headers: req.headers,
         rows,
         resultSets: sqlResult.resultSets || [],
-        context: {
-          requestId: `test-${Date.now()}`,
-          userId: 1,
-          roles: ["admin"],
-          callDepth: 0,
-          callChain: [api.path]
-        },
+        context: scriptContext,
         timeoutMs: api.scriptTimeoutMs || config.scriptTimeoutMs,
         maxCallDepth: config.maxCallDepth,
+        scriptWorker: config.scriptWorker,
+        executeCapability: (name, args) => runtime.executeScriptCapability(api, scriptContext, name, args),
         callApi: async (apiPath, callParams, callOptions) => {
           // 管理端测试允许调用草稿接口，方便联调未发布的内部依赖。
           return runtime.executeCallApi(apiPath, callParams, callOptions, {

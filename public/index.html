@@ -46,7 +46,7 @@
       </aside>
 
       <main class="workspace">
-        <!-- 顶部工具栏展示当前 API 状态，并提供保存、发布、停用操作。 -->
+        <!-- 顶部工具栏展示当前 API 状态，并提供保存和单一状态切换操作。 -->
         <header class="toolbar">
           <div>
             <h1 id="pageTitle">API 编辑</h1>
@@ -54,19 +54,22 @@
           </div>
           <div class="actions">
             <button id="saveBtn">保存</button>
-            <button id="publishBtn">发布</button>
-            <button id="disableBtn">停用</button>
+            <button id="statusToggleBtn" class="primary">发布</button>
           </div>
         </header>
+        <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
         <section class="editor-stack">
           <!-- API 基础信息和示例参数：运行时按路径、方法和参数执行动态接口。 -->
           <div class="panel">
             <div class="panel-title">
               <h2>接口信息</h2>
-              <span id="statusBadge" class="status-badge">draft</span>
+              <div class="panel-actions">
+                <span id="statusBadge" class="status-badge">draft</span>
+                <button id="apiInfoToggleBtn" type="button" class="icon-button panel-toggle-button" aria-expanded="true" aria-controls="apiInfoGrid" title="隐藏接口信息">⌃</button>
+              </div>
             </div>
-            <div class="api-info-grid">
+            <div id="apiInfoGrid" class="api-info-grid">
               <div class="form-grid">
                 <label>名称<input id="nameInput" placeholder="订单列表"></label>
                 <label>路径<input id="pathInput" placeholder="/api/order/list"></label>
@@ -81,6 +84,13 @@
                 <label>数据库<select id="databaseAliasInput"></select></label>
                 <label>SQL超时(秒)<input id="sqlTimeoutInput" type="number" min="1" step="1" value="5"></label>
                 <label>JS超时(秒)<input id="scriptTimeoutInput" type="number" min="1" step="1" value="1"></label>
+                <div class="capability-control span-2">
+                  <div>
+                    <div class="field-title-text">脚本能力</div>
+                    <div id="capabilitySummary" class="capability-summary"></div>
+                  </div>
+                  <button id="capabilityOpenBtn" type="button">选择能力</button>
+                </div>
                 <label class="span-2">说明<textarea id="descriptionInput" rows="3"></textarea></label>
               </div>
               <label class="params-field">
@@ -100,7 +110,7 @@
                   <option value="sql">原生 SQL</option>
                   <option value="xml">MyBatis XML</option>
                 </select>
-                <button id="runSqlBtn" type="button" class="primary">执行 SQL</button>
+                <button id="runSqlBtn" type="button" class="primary" title="Ctrl/Cmd+Enter">测试 SQL</button>
                 <button id="sqlHelpBtn" type="button">帮助</button>
               </div>
             </div>
@@ -125,6 +135,7 @@
                   <option value="params">1 参数处理</option>
                   <option value="result" selected>2 结果集处理</option>
                 </select>
+                <button id="runScriptBtn" type="button" class="primary" title="Ctrl/Cmd+Enter">测试 JS</button>
                 <button id="scriptHelpBtn" type="button">帮助</button>
               </div>
             </div>
@@ -145,9 +156,13 @@ async function main({ params }) {
 
 结果集处理:
 SQL 执行后运行，main 的返回值就是动态 API 响应体。
-直接 return resultSets 时，接口返回全部结果集。</pre>
+直接 return resultSets 时，接口返回全部结果集。
+
+文件能力:
+勾选脚本能力后可使用 await files.inspectUrl(url) 或 await files.downloadTemp(url)。
+需要自己处理异常时，可使用 files.tryInspectUrl(url) 或 callApi.tryGet(path, params)。</pre>
             </div>
-            <textarea id="scriptInput" class="code js-code" rows="13" spellcheck="false" autocomplete="off" autocapitalize="off" data-language="javascript">async function main({ params, resultSets, callApi }) {
+            <textarea id="scriptInput" class="code js-code" rows="13" spellcheck="false" autocomplete="off" autocapitalize="off" data-language="javascript">async function main({ params, resultSets, callApi, files }) {
   return resultSets;
 }</textarea>
           </div>
@@ -158,10 +173,39 @@ SQL 执行后运行，main 的返回值就是动态 API 响应体。
               <h2>日志</h2>
               <span id="rowFieldsInfo" class="code-language">rows: 0 个字段</span>
             </div>
-            <pre id="logBox" class="log-box">等待执行 SQL</pre>
+            <pre id="logBox" class="log-box">等待测试 SQL</pre>
           </div>
         </section>
       </main>
+    </div>
+
+    <div id="capabilityModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="capabilityModalTitle">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 id="capabilityModalTitle">选择脚本能力</h2>
+          <button id="capabilityCloseBtn" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+        <div class="modal-body">
+          <label class="capability-option">
+            <input id="capFilesInspectInput" type="checkbox" name="scriptCapability" value="files.inspectUrl">
+            <span>
+              <strong>探测网络文件大小</strong>
+              <small>允许脚本调用 files.inspectUrl(url)，读取网络文件大小和内容类型。</small>
+            </span>
+          </label>
+          <label class="capability-option">
+            <input id="capFilesDownloadInput" type="checkbox" name="scriptCapability" value="files.downloadTemp">
+            <span>
+              <strong>下载到临时文件</strong>
+              <small>允许脚本调用 files.downloadTemp(url)，下载文件到受控临时目录。</small>
+            </span>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button id="capabilityCancelBtn" type="button">取消</button>
+          <button id="capabilityApplyBtn" type="button" class="primary">确定</button>
+        </div>
+      </div>
     </div>
 
     <!-- CodeMirror 依赖先加载，最后加载业务脚本 app.js。 -->

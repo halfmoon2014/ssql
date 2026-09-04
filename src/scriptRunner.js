@@ -1,8 +1,13 @@
 const path = require("path");
 const { Worker } = require("worker_threads");
 const { AppError } = require("./errors");
+const { normalizeScriptError } = require("./scriptErrors");
 
-const blockedWords = /\b(require|process|global|Buffer|child_process|fs|net|http|https|import\s*\(|WebAssembly|eval|Function)\b/;
+const blockedWords = /\b(require|process|global|Buffer|child_process|fs|net|import\s*\(|WebAssembly|eval|Function)\b/;
+const defaultWorkerLimits = {
+  maxOldGenerationSizeMb: 32,
+  maxYoungGenerationSizeMb: 8
+};
 
 function deepClone(value) {
   // 通过 JSON 深拷贝隔离主线程对象，并确保只传递 JSON 兼容数据。
@@ -49,7 +54,8 @@ function buildSafeContext(context) {
     userId: context.userId || null,
     roles: Array.isArray(context.roles) ? context.roles : [],
     callDepth: context.callDepth || 0,
-    callChain: Array.isArray(context.callChain) ? context.callChain : []
+    callChain: Array.isArray(context.callChain) ? context.callChain : [],
+    scriptType: context.scriptType || null
   };
 }
 
@@ -70,49 +76,107 @@ function validateInternalApiCall(apiPath, params, options, context, maxCallDepth
   }
 }
 
+function validateCapabilityCall(name, args) {
+  // capability 调用只能传递 JSON 对象，由主线程按能力名继续做授权和参数校验。
+  if (typeof name !== "string" || !name) {
+    throw new AppError(400, "script capability name is invalid");
+  }
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    throw new AppError(400, "script capability args must be object");
+  }
+}
+
+function getWorkerResourceLimits(input = {}) {
+  const configured = input.scriptWorker || input.workerResourceLimits || {};
+  const maxOldGenerationSizeMb = Number(
+    configured.maxOldGenerationSizeMb || defaultWorkerLimits.maxOldGenerationSizeMb
+  );
+  const maxYoungGenerationSizeMb = Number(
+    configured.maxYoungGenerationSizeMb || defaultWorkerLimits.maxYoungGenerationSizeMb
+  );
+  if (!Number.isFinite(maxOldGenerationSizeMb) || maxOldGenerationSizeMb <= 0) {
+    throw new AppError(400, "script worker old generation memory limit is invalid");
+  }
+  if (!Number.isFinite(maxYoungGenerationSizeMb) || maxYoungGenerationSizeMb <= 0) {
+    throw new AppError(400, "script worker young generation memory limit is invalid");
+  }
+  return {
+    maxOldGenerationSizeMb,
+    maxYoungGenerationSizeMb
+  };
+}
+
+function isWorkerMemoryLimitError(error) {
+  const message = String(error && error.message || error || "");
+  return /heap out of memory|memory limit/i.test(message);
+}
+
+function createWorkerFailureError(error, limits) {
+  if (isWorkerMemoryLimitError(error)) {
+    return new AppError(507, "script memory limit exceeded", {
+      reason: "Worker reached configured memory limit",
+      limits
+    });
+  }
+  return new AppError(500, "script worker failed", {
+    reason: error && error.message || String(error || "worker failed")
+  });
+}
+
 async function runScript(input) {
   const script = validateScriptText(input.script);
-  const timeoutMs = Number(input.timeoutMs || 1000);
+  const timeoutMs = Number(input.timeoutMs);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new AppError(400, "script timeout is invalid");
+  const workerResourceLimits = getWorkerResourceLimits(input);
   // 每次脚本执行都放入独立 Worker，方便设置内存限制和超时终止。
   const worker = new Worker(path.join(__dirname, "scriptWorker.js"), {
     workerData: {
       script,
+      timeoutMs,
       params: deepClone(input.params || {}),
       headers: filterHeaders(input.headers || {}),
       rows: deepClone(input.rows || []),
       resultSets: deepClone(input.resultSets || []),
       context: buildSafeContext(input.context || {})
     },
-    resourceLimits: {
-      maxOldGenerationSizeMb: 32,
-      maxYoungGenerationSizeMb: 8
-    }
+    resourceLimits: workerResourceLimits
   });
 
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+    let settled = false;
+    let timer = null;
+    function settle(callback) {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      callback();
+    }
+
+    timer = setTimeout(() => {
       // 超时直接终止 Worker，避免用户脚本长时间占用事件循环。
       worker.terminate();
-      reject(new AppError(408, "script execute timeout"));
+      settle(() => reject(new AppError(408, "script execute timeout")));
     }, timeoutMs);
 
     worker.on("message", async (message) => {
       if (message.type === "result") {
-        clearTimeout(timer);
-        worker.terminate();
-        try {
-          assertJsonSerializable(message.result);
-          resolve(deepClone(message.result));
-        } catch (error) {
-          reject(error);
-        }
+        settle(() => {
+          worker.terminate();
+          try {
+            assertJsonSerializable(message.result);
+            resolve(deepClone(message.result));
+          } catch (error) {
+            reject(error);
+          }
+        });
         return;
       }
 
       if (message.type === "error") {
-        clearTimeout(timer);
-        worker.terminate();
-        reject(new AppError(500, "script execute failed", { reason: message.error }));
+        settle(() => {
+          worker.terminate();
+          reject(new AppError(500, "script execute failed", { reason: message.error }));
+        });
         return;
       }
 
@@ -126,21 +190,36 @@ async function runScript(input) {
           worker.postMessage({
             type: "callApiResult",
             id: message.id,
-            error: error.message || "callApi failed"
+            error: normalizeScriptError(error, { capability: `callApi.${String(message.options && message.options.method || "").toLowerCase()}` })
+          });
+        }
+      }
+
+      if (message.type === "capability") {
+        try {
+          validateCapabilityCall(message.name, message.args);
+          if (typeof input.executeCapability !== "function") {
+            throw new AppError(403, "script capability is not available");
+          }
+          const result = await input.executeCapability(message.name, message.args);
+          worker.postMessage({ type: "capabilityResult", id: message.id, result: deepClone(result) });
+        } catch (error) {
+          worker.postMessage({
+            type: "capabilityResult",
+            id: message.id,
+            error: normalizeScriptError(error, { capability: message.name })
           });
         }
       }
     });
 
     worker.on("error", (error) => {
-      clearTimeout(timer);
-      reject(new AppError(500, "script worker failed", { reason: error.message }));
+      settle(() => reject(createWorkerFailureError(error, workerResourceLimits)));
     });
 
     worker.on("exit", (code) => {
       if (code !== 0) {
-        clearTimeout(timer);
-        reject(new AppError(500, "script worker stopped"));
+        settle(() => reject(new AppError(500, "script worker stopped")));
       }
     });
   });
@@ -148,5 +227,7 @@ async function runScript(input) {
 
 module.exports = {
   runScript,
-  validateScriptText
+  validateScriptText,
+  createWorkerFailureError,
+  getWorkerResourceLimits
 };

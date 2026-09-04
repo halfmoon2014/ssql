@@ -4,10 +4,106 @@ const path = require("path");
 const rootDir = path.resolve(__dirname, "..");
 const supportedDatabaseTypes = new Set(["mysql", "mssql"]);
 
+function stripJsonc(text) {
+  // JSONC 支持注释和尾逗号；这里用状态机处理，避免误删字符串里的 // 或 /*。
+  let output = "";
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (inString) {
+      output += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      output += char;
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      while (index < text.length && text[index] !== "\n") index += 1;
+      output += "\n";
+      continue;
+    }
+
+    if (char === "/" && next === "*") {
+      index += 2;
+      while (index < text.length && !(text[index] === "*" && text[index + 1] === "/")) {
+        output += text[index] === "\n" ? "\n" : " ";
+        index += 1;
+      }
+      index += 1;
+      continue;
+    }
+
+    output += char;
+  }
+  return output;
+}
+
+function removeJsonTrailingCommas(text) {
+  let output = "";
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      output += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      output += char;
+      continue;
+    }
+
+    if (char === ",") {
+      let nextIndex = index + 1;
+      while (/\s/.test(text[nextIndex] || "")) nextIndex += 1;
+      if (text[nextIndex] === "}" || text[nextIndex] === "]") continue;
+    }
+
+    output += char;
+  }
+  return output;
+}
+
+function parseJsonc(text) {
+  return JSON.parse(removeJsonTrailingCommas(stripJsonc(text)));
+}
+
 // 配置文件不存在时允许用默认值启动，便于本地开发和首次部署。
-function readJson(filePath, fallback) {
+function readJson(filePath, fallback, options = {}) {
   if (!fs.existsSync(filePath)) return fallback;
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const text = fs.readFileSync(filePath, "utf8");
+  return options.jsonc ? parseJsonc(text) : JSON.parse(text);
+}
+
+function readAppConfig(fallback) {
+  const jsoncPath = path.join(rootDir, "app.config.jsonc");
+  const legacyJsonPath = path.join(rootDir, "app.config.json");
+  if (fs.existsSync(jsoncPath)) return readJson(jsoncPath, fallback, { jsonc: true });
+  return readJson(legacyJsonPath, fallback);
 }
 
 function normalizeDataSource(alias, source) {
@@ -69,23 +165,88 @@ function normalizeDatabaseConfig(databaseConfig) {
   };
 }
 
+function numberFromEnv(name, fallback) {
+  const value = process.env[name];
+  const number = value === undefined || value === "" ? Number(fallback) : Number(value);
+  if (!Number.isFinite(number)) throw new Error(`${name} config must be number`);
+  return number;
+}
+
+function stringFromEnv(name, fallback) {
+  const value = process.env[name];
+  const output = value === undefined || value === "" ? fallback : value;
+  if (typeof output !== "string" || !output.trim()) throw new Error(`${name} config is required`);
+  return output;
+}
+
+function booleanFromEnv(name, fallback) {
+  const value = process.env[name];
+  if (value === undefined || value === "") return Boolean(fallback);
+  return value === "1" || value.toLowerCase() === "true";
+}
+
+function listFromEnv(name, fallback) {
+  const value = process.env[name];
+  if (value === undefined || value === "") return Array.isArray(fallback) ? fallback : [];
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function resolveProjectPath(value) {
+  const raw = String(value || "").trim();
+  if (!raw) throw new Error("config path is required");
+  return path.isAbsolute(raw) ? raw : path.join(rootDir, raw);
+}
+
+function normalizeAppConfig(appConfig) {
+  // 运行配置来自 app.config.jsonc；环境变量只作为部署时覆盖入口，不再承载默认值。
+  const server = appConfig.server || {};
+  const paths = appConfig.paths || {};
+  const timeouts = appConfig.timeouts || {};
+  const runtime = appConfig.runtime || {};
+  const fileCapabilities = (appConfig.capabilities && appConfig.capabilities.files) || {};
+
+  return {
+    port: numberFromEnv("PORT", server.port),
+    host: stringFromEnv("HOST", server.host),
+    dataDir: resolveProjectPath(paths.dataDir),
+    publicDir: resolveProjectPath(paths.publicDir),
+    scriptTimeoutMs: numberFromEnv("SCRIPT_TIMEOUT_MS", timeouts.scriptMs),
+    sqlTimeoutMs: numberFromEnv("SQL_TIMEOUT_MS", timeouts.sqlMs),
+    maxCallDepth: numberFromEnv("MAX_CALL_DEPTH", runtime.maxCallDepth),
+    scriptWorker: {
+      // Worker 内存限制保护主进程；默认值保持偏保守，可按部署规模在配置文件或环境变量中调整。
+      maxOldGenerationSizeMb: numberFromEnv("SCRIPT_WORKER_MAX_OLD_MB", runtime.scriptWorker?.maxOldGenerationSizeMb || 32),
+      maxYoungGenerationSizeMb: numberFromEnv("SCRIPT_WORKER_MAX_YOUNG_MB", runtime.scriptWorker?.maxYoungGenerationSizeMb || 8)
+    },
+    capabilities: {
+      files: {
+        tempDir: resolveProjectPath(stringFromEnv("FILE_CAPABILITY_TEMP_DIR", fileCapabilities.tempDir)),
+        maxBytes: numberFromEnv("FILE_CAPABILITY_MAX_BYTES", fileCapabilities.maxBytes),
+        timeoutMs: numberFromEnv("FILE_CAPABILITY_TIMEOUT_MS", fileCapabilities.timeoutMs),
+        maxRedirects: numberFromEnv("FILE_CAPABILITY_MAX_REDIRECTS", fileCapabilities.maxRedirects),
+        allowedProtocols: listFromEnv("FILE_CAPABILITY_ALLOWED_PROTOCOLS", fileCapabilities.allowedProtocols),
+        allowedHosts: listFromEnv("FILE_CAPABILITY_ALLOWED_HOSTS", fileCapabilities.allowedHosts)
+          .map((item) => item.toLowerCase()),
+        allowPrivateNetwork: booleanFromEnv("FILE_CAPABILITY_ALLOW_PRIVATE_NETWORK", fileCapabilities.allowPrivateNetwork)
+      }
+    }
+  };
+}
+
 // 集中读取运行配置，业务模块只依赖这里返回的结构。
 function loadConfig() {
+  const appConfig = normalizeAppConfig(readAppConfig({}));
   const databaseConfig = normalizeDatabaseConfig(readJson(path.join(rootDir, "database.config.json"), {}));
   return {
-    port: Number(process.env.PORT || 3010),
-    host: process.env.HOST || "0.0.0.0",
+    ...appConfig,
     rootDir,
-    dataDir: path.join(rootDir, "data"),
-    publicDir: path.join(rootDir, "public"),
-    database: databaseConfig,
-    scriptTimeoutMs: Number(process.env.SCRIPT_TIMEOUT_MS || 1000),
-    sqlTimeoutMs: Number(process.env.SQL_TIMEOUT_MS || 5000),
-    maxCallDepth: Number(process.env.MAX_CALL_DEPTH || 5)
+    database: databaseConfig
   };
 }
 
 module.exports = {
   loadConfig,
+  parseJsonc,
+  normalizeAppConfig,
   normalizeDatabaseConfig
 };

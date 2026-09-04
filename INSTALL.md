@@ -92,12 +92,28 @@ npm run dev
 http://127.0.0.1:3010
 ```
 
-默认端口是 `3010`，默认监听地址是 `0.0.0.0`。
+默认端口和监听地址来自 `app.config.jsonc`:
+
+```jsonc
+{
+  // 服务监听配置。临时覆盖可使用 PORT / HOST 环境变量。
+  "server": {
+    "port": 3010,
+    "host": "0.0.0.0"
+  },
+  "runtime": {
+    "scriptWorker": {
+      "maxOldGenerationSizeMb": 32,
+      "maxYoungGenerationSizeMb": 8
+    }
+  }
+}
+```
 
 ## 5. 修改端口
 
-服务端口通过环境变量 `PORT` 控制。
-服务监听地址通过环境变量 `HOST` 控制。
+长期配置建议修改 `app.config.jsonc`。服务端口也可以通过环境变量 `PORT` 临时覆盖，服务监听地址可以通过环境变量 `HOST` 临时覆盖。
+JS Worker 内存上限可通过 `runtime.scriptWorker` 调整，也可以用 `SCRIPT_WORKER_MAX_OLD_MB`、`SCRIPT_WORKER_MAX_YOUNG_MB` 临时覆盖。
 
 ### Linux 或 macOS
 
