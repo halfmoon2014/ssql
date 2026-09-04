@@ -783,7 +783,9 @@ async function runScript(input: RunScriptInput): Promise<unknown> {
 
 - `POST /admin/login`: 登录。
 - `GET /admin/database-sources`: 获取脱敏后的数据库别名列表。
-- `GET /admin/apis`: 查询 API 列表，支持 `name`、`sql`、`page`、`pageSize` 查询参数。
+- `GET /admin/tags`: 查询标签列表。
+- `POST /admin/tags`: 新增标签。
+- `GET /admin/apis`: 查询 API 列表，支持 `name`、`sql`、`tagIds`、`page`、`pageSize` 查询参数。
 - `POST /admin/apis`: 创建 API。
 - `GET /admin/apis/:id`: 查看 API 详情。
 - `PUT /admin/apis/:id`: 更新 API。

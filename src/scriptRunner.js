@@ -123,11 +123,16 @@ function createWorkerFailureError(error, limits) {
   });
 }
 
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw new AppError(499, "script test aborted");
+}
+
 async function runScript(input) {
   const script = validateScriptText(input.script);
   const timeoutMs = Number(input.timeoutMs);
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new AppError(400, "script timeout is invalid");
   const workerResourceLimits = getWorkerResourceLimits(input);
+  throwIfAborted(input.signal);
   // 每次脚本执行都放入独立 Worker，方便设置内存限制和超时终止。
   const worker = new Worker(path.join(__dirname, "scriptWorker.js"), {
     workerData: {
@@ -145,11 +150,25 @@ async function runScript(input) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer = null;
+    function abortScript() {
+      worker.terminate();
+      settle(() => reject(new AppError(499, "script test aborted")));
+    }
+
     function settle(callback) {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (input.signal) input.signal.removeEventListener("abort", abortScript);
       callback();
+    }
+
+    if (input.signal) {
+      input.signal.addEventListener("abort", abortScript, { once: true });
+      if (input.signal.aborted) {
+        abortScript();
+        return;
+      }
     }
 
     timer = setTimeout(() => {
@@ -185,8 +204,10 @@ async function runScript(input) {
           // Worker 不能直接访问 runtime，只能通过消息把内部 API 调用交回主线程。
           validateInternalApiCall(message.path, message.params, message.options, input.context, input.maxCallDepth);
           const result = await input.callApi(message.path, message.params, message.options);
+          if (settled) return;
           worker.postMessage({ type: "callApiResult", id: message.id, result: deepClone(result) });
         } catch (error) {
+          if (settled) return;
           worker.postMessage({
             type: "callApiResult",
             id: message.id,
@@ -202,8 +223,10 @@ async function runScript(input) {
             throw new AppError(403, "script capability is not available");
           }
           const result = await input.executeCapability(message.name, message.args);
+          if (settled) return;
           worker.postMessage({ type: "capabilityResult", id: message.id, result: deepClone(result) });
         } catch (error) {
+          if (settled) return;
           worker.postMessage({
             type: "capabilityResult",
             id: message.id,

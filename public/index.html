@@ -18,12 +18,22 @@
             <div class="brand">SQL API</div>
             <div class="sidebar-subtitle">接口管理</div>
           </div>
-          <button id="newApiBtn" class="primary">新建</button>
+          <div class="sidebar-actions">
+            <button id="newApiBtn" class="primary">新建</button>
+            <button id="tagManageBtn" type="button">标签管理</button>
+          </div>
         </div>
         <form id="apiSearchForm" class="api-search">
           <div class="search-title">筛选</div>
           <label>名称<input id="nameSearchInput" placeholder="按名称查找"></label>
           <label>SQL<input id="sqlSearchInput" placeholder="按 SQL 查找"></label>
+          <div class="tag-field">
+            <div class="field-title">
+              <span class="field-title-text">标签</span>
+              <button id="searchTagSelectBtn" type="button">选择标签</button>
+            </div>
+            <div id="searchTagSummary" class="tag-list compact"></div>
+          </div>
           <div class="search-actions">
             <button type="submit" class="primary">查找</button>
             <button type="button" id="resetSearchBtn">重置</button>
@@ -82,6 +92,7 @@
                   </select>
                 </label>
                 <label>数据库<select id="databaseAliasInput"></select></label>
+                <label class="half-span">说明<input id="descriptionInput"></label>
                 <label>SQL超时(秒)<input id="sqlTimeoutInput" type="number" min="1" step="1" value="5"></label>
                 <label>JS超时(秒)<input id="scriptTimeoutInput" type="number" min="1" step="1" value="1"></label>
                 <div class="capability-control span-2">
@@ -91,7 +102,13 @@
                   </div>
                   <button id="capabilityOpenBtn" type="button">选择能力</button>
                 </div>
-                <label class="span-2">说明<textarea id="descriptionInput" rows="3"></textarea></label>
+                <div class="tag-field half-span">
+                  <div>
+                    <div class="field-title-text">标签</div>
+                    <div id="apiTagSummary" class="tag-list"></div>
+                  </div>
+                  <button id="apiTagSelectBtn" type="button">选择标签</button>
+                </div>
               </div>
               <label class="params-field">
                 <span class="field-title">示例参数 <span class="code-language">JSON</span></span>
@@ -110,7 +127,6 @@
                   <option value="sql">原生 SQL</option>
                   <option value="xml">MyBatis XML</option>
                 </select>
-                <button id="runSqlBtn" type="button" class="primary" title="Ctrl/Cmd+Enter">测试 SQL</button>
                 <button id="sqlHelpBtn" type="button">帮助</button>
               </div>
             </div>
@@ -135,7 +151,6 @@
                   <option value="params">1 参数处理</option>
                   <option value="result" selected>2 结果集处理</option>
                 </select>
-                <button id="runScriptBtn" type="button" class="primary" title="Ctrl/Cmd+Enter">测试 JS</button>
                 <button id="scriptHelpBtn" type="button">帮助</button>
               </div>
             </div>
@@ -171,12 +186,53 @@ SQL 执行后运行，main 的返回值就是动态 API 响应体。
           <div class="panel">
             <div class="panel-title">
               <h2>日志</h2>
-              <span id="rowFieldsInfo" class="code-language">rows: 0 个字段</span>
+              <div class="panel-actions log-actions">
+                <span id="rowFieldsInfo" class="code-language">rows: 0 个字段</span>
+                <button id="runSqlBtn" type="button" class="primary" title="Ctrl/Cmd+Enter">测试 SQL</button>
+                <button id="abortSqlBtn" type="button" class="abort-test-btn hidden">中断 SQL</button>
+                <button id="runScriptBtn" type="button" class="primary" title="Ctrl/Cmd+Enter">测试 JS</button>
+                <button id="abortScriptBtn" type="button" class="abort-test-btn hidden">中断 JS</button>
+              </div>
             </div>
             <pre id="logBox" class="log-box">等待测试 SQL</pre>
           </div>
         </section>
       </main>
+    </div>
+
+    <div id="tagModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="tagModalTitle">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 id="tagModalTitle">标签管理</h2>
+          <button id="tagCloseBtn" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+        <div class="modal-body">
+          <form id="tagCreateForm" class="tag-create-form">
+            <label>新增标签<input id="tagNameInput" maxlength="100" placeholder="例如：订单"></label>
+            <button id="tagAddBtn" type="submit" class="primary">新增</button>
+          </form>
+          <div id="tagManageList" class="tag-manage-list"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="tagDoneBtn" type="button" class="primary">完成</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="tagSelectModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="tagSelectModalTitle">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 id="tagSelectModalTitle">选择 API 标签</h2>
+          <button id="tagSelectCloseBtn" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+        <div class="modal-body">
+          <div id="tagSelectList" class="tag-list select-list"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="tagSelectCancelBtn" type="button">取消</button>
+          <button id="tagSelectApplyBtn" type="button" class="primary">确定</button>
+        </div>
+      </div>
     </div>
 
     <div id="capabilityModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="capabilityModalTitle">

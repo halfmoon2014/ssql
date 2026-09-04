@@ -585,18 +585,31 @@ function prepareSqlExecution(api, params, databaseType = "mysql") {
   };
 }
 
-async function executeMysql(source, api, prepared) {
+function throwIfAborted(signal, message = "sql test aborted") {
+  if (signal?.aborted) throw new AppError(499, message);
+}
+
+async function executeMysql(source, api, prepared, options = {}) {
+  throwIfAborted(options.signal);
   const connection = await mysql.createConnection({
     ...toMysqlConnectionOptions(source),
     multipleStatements: true,
     connectTimeout: api.sqlTimeoutMs || 5000
   });
+  let aborted = false;
+  function abortQuery() {
+    aborted = true;
+    connection.destroy();
+  }
 
   try {
+    if (options.signal) options.signal.addEventListener("abort", abortQuery, { once: true });
+    throwIfAborted(options.signal);
     const [rows, fields] = await connection.query({
       sql: prepared.executableSql || prepared.sql,
       timeout: api.sqlTimeoutMs || 5000
     });
+    throwIfAborted(options.signal);
     const resultSets = normalizeMysqlResultSets(rows, fields);
     return {
       rows: resultSets[0]?.rows || [],
@@ -605,13 +618,20 @@ async function executeMysql(source, api, prepared) {
       sqlDebug: prepared.debug
     };
   } catch (error) {
+    if (aborted || options.signal?.aborted) throw new AppError(499, "sql test aborted");
     throw new AppError(500, "sql execute failed", { reason: error.message });
   } finally {
-    await connection.end();
+    if (options.signal) options.signal.removeEventListener("abort", abortQuery);
+    if (aborted || options.signal?.aborted) {
+      connection.destroy();
+    } else {
+      await connection.end();
+    }
   }
 }
 
-async function executeMssql(source, api, prepared) {
+async function executeMssql(source, api, prepared, options = {}) {
+  throwIfAborted(options.signal);
   let mssql = null;
   try {
     mssql = require("mssql");
@@ -634,13 +654,21 @@ async function executeMssql(source, api, prepared) {
     requestTimeout: api.sqlTimeoutMs || 5000
   });
 
+  let request = null;
+  function abortQuery() {
+    if (request) request.cancel();
+  }
+
   try {
     await pool.connect();
-    const request = pool.request();
+    request = pool.request();
+    if (options.signal) options.signal.addEventListener("abort", abortQuery, { once: true });
+    throwIfAborted(options.signal);
     for (const parameter of prepared.parameters || []) {
       request.input(parameter.name, parameter.value);
     }
     const result = await request.query(prepared.sql);
+    throwIfAborted(options.signal);
     const resultSets = normalizeMssqlResultSets(result);
     return {
       rows: resultSets[0]?.rows || [],
@@ -649,20 +677,22 @@ async function executeMssql(source, api, prepared) {
       sqlDebug: prepared.debug
     };
   } catch (error) {
+    if (options.signal?.aborted) throw new AppError(499, "sql test aborted");
     throw new AppError(500, "sql execute failed", { reason: error.message });
   } finally {
+    if (options.signal) options.signal.removeEventListener("abort", abortQuery);
     await pool.close();
   }
 }
 
-async function executeSqlWithFields(config, api, params, preparedSql = null) {
+async function executeSqlWithFields(config, api, params, preparedSql = null, options = {}) {
   const source = resolveDatabaseSource(config, api);
   const databaseType = normalizeDatabaseType(source.type);
 
   // 安全校验和参数编译都在建立连接前完成，失败时不占用连接。
   const prepared = preparedSql || prepareSqlExecution(api, params, databaseType);
-  if (databaseType === "mysql") return executeMysql(source, api, prepared);
-  if (databaseType === "mssql") return executeMssql(source, api, prepared);
+  if (databaseType === "mysql") return executeMysql(source, api, prepared, options);
+  if (databaseType === "mssql") return executeMssql(source, api, prepared, options);
   throw new AppError(500, `unsupported database type: ${databaseType}`);
 }
 

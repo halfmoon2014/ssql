@@ -154,6 +154,7 @@ class ApiRuntime {
       timeoutMs: api.scriptTimeoutMs || this.config.scriptTimeoutMs,
       maxCallDepth: this.config.maxCallDepth,
       scriptWorker: this.config.scriptWorker,
+      signal: options.signal,
       executeCapability: (name, args) => this.executeScriptCapability(api, {
         requestId,
         userId: options.userId,

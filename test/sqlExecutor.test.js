@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   compileNamedParams,
+  executeSqlWithFields,
   extractMyBatisSelectSql,
   evaluateMyBatisTest,
   normalizeMysqlResultSets,
@@ -237,4 +238,28 @@ test("prepareSqlExecution returns debug sql snapshots without row limit wrapping
   assert.equal(Object.prototype.hasOwnProperty.call(prepared.debug, "limitedSql"), false);
   assert.equal(compactSql(prepared.debug.boundSql), "select * from users where id in (?,?)");
   assert.deepEqual(prepared.debug.boundValues, [1, 2]);
+});
+
+test("executeSqlWithFields exits early when signal is already aborted", async () => {
+  const controller = new AbortController();
+  controller.abort();
+
+  await assert.rejects(
+    () => executeSqlWithFields({
+      defaultAlias: "default",
+      sources: [{
+        alias: "default",
+        type: "mysql",
+        host: "127.0.0.1",
+        user: "root",
+        database: "missing"
+      }]
+    }, {
+      databaseAlias: "default",
+      sqlMode: "sql",
+      sqlText: "select 1",
+      sqlTimeoutMs: 100
+    }, {}, null, { signal: controller.signal }),
+    (error) => error.statusCode === 499 && error.message === "sql test aborted"
+  );
 });

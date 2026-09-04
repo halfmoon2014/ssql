@@ -982,3 +982,125 @@
   - `node --check public/app.js` 通过。
   - `npm test` 通过。
   - `curl -I http://127.0.0.1:3015/app.js` 和 `/style.css` 返回 `200 OK`。
+
+### 示例参数固定高度
+
+- 用户要求：示例参数不用根据内容切换高度。
+- 已修改 `public/style.css`：示例参数 CodeMirror 固定为 `240px` 高度，不再随内容或父级拉伸变化。
+- 示例参数内容超过固定高度时使用编辑器内部纵向滚动，避免撑开接口信息区。
+- 验证：
+  - `node --check public/app.js` 通过。
+  - `npm test` 通过。
+  - `curl -I http://127.0.0.1:3010/` 和 `/style.css` 返回 `200 OK`。
+
+### API 标签管理和标签筛选
+
+- 用户要求：数据库增加标签表；新建按钮旁增加标签管理；标签管理可查看和新增标签；接口信息中在 JS 超时后增加多选标签；保存 API 时一起保存标签；API 查找支持选择多个标签并查出包含所选标签的 API。
+- 已修改 `src/store.js`：新增 `ssql_tags` 和 `ssql_api_tags` 表，增加标签列表/新增、API 标签关联保存、API 详情和列表返回 `tagIds`/`tags`，并支持 `tagIds` 多标签包含筛选。
+- 已修改 `src/server.js`：新增 `GET /admin/tags` 和 `POST /admin/tags` 管理接口，`GET /admin/apis` 透传标签筛选查询参数。
+- 已修改 `public/index.html`、`public/app.js`、`public/style.css`：新增标签管理弹窗、API 标签多选、列表筛选标签多选和 API 列表标签展示。
+- 已更新 `INSTALL.md` 和 `readme.md` 记录新增表和管理接口。
+- 已新增 `test/store.test.js` 覆盖标签名称和标签 id 归一化。
+- 验证：
+  - `for file in src/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+  - `PORT=3016 npm run dev` 启动当前代码并完成 MySQL 初始化。
+  - `curl -L http://127.0.0.1:3016/admin/tags` 返回 `code: 0`。
+  - `curl -L 'http://127.0.0.1:3016/admin/apis?tagIds=__missing_tag__'` 返回空分页结果。
+  - `curl -I http://127.0.0.1:3016/app.js` 返回 `200 OK`。
+
+### 数据库表名改为 adata 前缀
+
+- 用户要求：数据库表命名按 `adata_` 开头；数据库中的表名用户自行修改，程序中的表名全部替换成 `adata_` 开头。
+- 已修改 `src/store.js`：运行时和迁移逻辑中的表名改为 `adata_api_definitions`、`adata_api_call_logs`、`adata_tags`、`adata_api_tags`。
+- 已同步索引/唯一键命名为 `idx_adata_*`、`ux_adata_*`，保持数据库对象命名一致。
+- 已更新 `INSTALL.md` 中自动建表说明。
+- 验证：
+  - `for file in src/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+  - `rg -n "ssql_" src test public INSTALL.md readme.md package.json app.config.jsonc database.config.json` 无匹配。
+
+### API 标签弹窗选择和未保存颜色
+
+- 用户要求：API 标签选择使用弹出窗口，选择完成后返回显示在界面上；保存前标签颜色和已保存标签颜色做区分。
+- 已修改 `public/index.html`：接口信息里的标签区域改为“选择标签”按钮和已选标签回显，并新增 `tagSelectModal` 标签选择弹窗。
+- 已修改 `public/app.js`：API 标签选择改为页面状态保存，弹窗确定后回显到表单；保存时提交当前已选标签；API 回填时记录已保存标签集合用于颜色对比。
+- 已修改 `public/style.css`：已保存标签使用青绿色，待保存标签使用橙色，标签选择弹窗列表支持内部滚动。
+- 验证：
+  - `node --check public/app.js` 通过。
+  - `npm test` 通过。
+
+### 筛选标签弹窗选择
+
+- 用户要求：筛选中的标签选择也使用弹窗选择。
+- 已修改 `public/index.html`：筛选区标签改为“选择标签”按钮和已选标签回显。
+- 已修改 `public/app.js`：复用标签选择弹窗，按 API 标签和筛选标签两种模式读取、回填和提示；筛选标签选择后先回显，点击“查找”时才提交到 API 列表查询。
+- 验证：
+  - `node --check public/app.js` 通过。
+  - `npm test` 通过。
+
+### API 标签按钮位置调整
+
+- 用户要求：`tag-field half-span` 参考 `capability-control span-2`，移动“选择标签”按钮的位置。
+- 已修改 `public/index.html`：API 标签区域改为左侧标题和已选标签、右侧“选择标签”按钮的结构。
+- 已修改 `public/style.css`：`.tag-field.half-span` 使用类似 `.capability-control` 的边框、间距、对齐和小屏幕纵向布局。
+- 验证：
+  - `node --check public/app.js` 通过。
+  - `npm test` 通过。
+
+### 说明和标签位置对调
+
+- 用户要求：说明和标签位置对调。
+- 已修改 `public/index.html`：将“说明”移动到原 API 标签区域位置，将“标签”移动到原说明区域位置。
+- 验证：
+  - `node --check public/app.js` 通过。
+  - `npm test` 通过。
+
+### 说明和超时字段同排
+
+- 用户要求：“说明”“SQL超时(秒)”“JS超时(秒)”三者放在一行，说明占前 2 列。
+- 已修改 `public/index.html`：将说明字段调整为 `half-span`，并放在 SQL 超时和 JS 超时前面，使三者在 4 列表单中同排显示。
+- 验证：
+  - `node --check public/app.js` 通过。
+  - `npm test` 通过。
+
+### 标签整行和说明单行输入
+
+- 用户要求：`tag-field half-span` 占满一行，说明 `textarea` 改成 `input`。
+- 已修改 `public/index.html`：说明字段改为单行输入框。
+- 已修改 `public/style.css`：`.tag-field.half-span` 在表单网格中占满整行。
+- 验证：
+  - `node --check public/app.js` 通过。
+  - `npm test` 通过。
+
+### 测试按钮移动和中断测试
+
+- 用户要求：“测试 SQL”和“测试 JS”放在日志右边，且都需要增加中断测试功能。
+- 已修改 `public/index.html`：将测试 SQL、测试 JS 按钮移动到日志面板标题右侧，并新增中断 SQL、中断 JS 按钮。
+- 已修改 `public/style.css`：补充日志标题操作区换行布局和中断按钮样式。
+- 已修改 `public/app.js`：测试 SQL、测试 JS 使用 `AbortController` 管理请求；点击中断按钮会取消当前测试请求并恢复按钮状态。
+- 已修改 `src/server.js`、`src/scriptRunner.js`、`src/sqlExecutor.js`、`src/runtime.js`：管理端测试请求断开时，后端会向下游传递中断信号，JS Worker 会终止，SQL 查询会尽量取消并关闭连接。
+- 已更新 `test/scriptRunner.test.js` 和 `test/sqlExecutor.test.js`：覆盖 JS 测试中断和 SQL 已中断信号提前退出。
+- 验证：
+  - `for file in src/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### API 请求安全验证建议
+
+- 用户询问：每个 API 请求建议使用什么安全验证。
+- 建议方向：外部动态 API 优先使用 HTTPS、调用方身份认证、权限控制、时间戳签名防重放、限流、参数校验、审计日志和敏感数据脱敏；管理端接口需要更强的登录态和权限隔离。
+
+### 用户注册和 Authenticator 身份设计
+
+- 用户想做用户注册，使用 Google Authenticator 登记，并在 API 请求时带上身份。
+- 设计建议：注册时建立用户账号和 TOTP 密钥绑定；登录时先校验账号密码，再校验 Authenticator 动态码；API 调用使用登录后签发的访问令牌携带身份，并在运行时注入 userId、roles 等身份上下文。
+
+### API 授权和授权页 IP 白名单
+
+- 用户询问：用户需要每个 API 授权，授权页面打开需要在 IP 白名单里，这样是否可行。
+- 设计建议：方案可行；API 执行权限应按用户/角色/API 维度独立校验，授权管理页面可额外增加 IP 白名单作为管理入口保护，但不能只依赖 IP 白名单替代登录、二次验证和操作审计。
+
+### 用户到 API 权限和 API 调用 IP 白名单
+
+- 用户确认只使用“用户 -> API 权限”模型，并询问 API 调用 IP 白名单限制某些 API 只能从指定服务器调用时配置什么。
+- 设计建议：API 调用 IP 白名单应作为每个 API 的独立配置，保存允许访问该 API 的来源 IP/CIDR 列表；请求执行时在用户授权校验之外，再校验请求来源 IP 是否命中该 API 的白名单。

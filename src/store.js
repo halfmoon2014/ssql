@@ -48,6 +48,21 @@ function normalizeSqlMode(value, sqlText = "") {
   return detectSqlMode(sqlText);
 }
 
+function normalizeTagName(value) {
+  return String(value || "").trim();
+}
+
+function normalizeTagIds(value) {
+  // 前端筛选用逗号串，保存用数组；这里统一去重并丢弃空值。
+  const items = Array.isArray(value)
+    ? value
+    : String(value || "").split(",");
+  return [...new Set(items
+    .map((item) => typeof item === "object" && item ? item.id : item)
+    .map((item) => String(item || "").trim())
+    .filter(Boolean))];
+}
+
 class Store {
   constructor({ database, dataDir, logger = null }) {
     if (!database.mysql) throw new AppError(500, "metadata mysql config is missing");
@@ -73,7 +88,7 @@ class Store {
   async createTables() {
     // API 定义表存储配置本身，运行时按 path + method 查找已发布接口。
     await this.pool.execute(`
-      create table if not exists ssql_api_definitions (
+      create table if not exists adata_api_definitions (
         id varchar(64) primary key,
         name varchar(100) not null,
         path varchar(255) not null,
@@ -93,14 +108,14 @@ class Store {
         deleted_at varchar(32) null,
         created_at varchar(32) not null,
         updated_at varchar(32) not null,
-        index idx_ssql_api_path_method (path, method),
-        index idx_ssql_api_status (status)
+        index idx_adata_api_path_method (path, method),
+        index idx_adata_api_status (status)
       )
     `);
 
     // 调用日志表记录主调用和 callApi 子调用，便于追踪链路和失败原因。
     await this.pool.execute(`
-      create table if not exists ssql_api_call_logs (
+      create table if not exists adata_api_call_logs (
         id varchar(64) primary key,
         request_id varchar(64) not null,
         parent_request_id varchar(64) null,
@@ -112,9 +127,31 @@ class Store {
         error_message text,
         call_chain longtext,
         created_at varchar(32) not null,
-        index idx_ssql_log_request_id (request_id),
-        index idx_ssql_log_api_id (api_id),
-        index idx_ssql_log_created_at (created_at)
+        index idx_adata_log_request_id (request_id),
+        index idx_adata_log_api_id (api_id),
+        index idx_adata_log_created_at (created_at)
+      )
+    `);
+
+    // 标签和 API 之间是多对多关系，筛选时按关联表聚合匹配。
+    await this.pool.execute(`
+      create table if not exists adata_tags (
+        id varchar(64) primary key,
+        name varchar(100) not null,
+        deleted_at varchar(32) null,
+        created_at varchar(32) not null,
+        updated_at varchar(32) not null,
+        unique key ux_adata_tag_name (name)
+      )
+    `);
+
+    await this.pool.execute(`
+      create table if not exists adata_api_tags (
+        api_id varchar(64) not null,
+        tag_id varchar(64) not null,
+        created_at varchar(32) not null,
+        primary key (api_id, tag_id),
+        index idx_adata_api_tags_tag_id (tag_id)
       )
     `);
   }
@@ -124,62 +161,62 @@ class Store {
     const [sqlModeRows] = await this.pool.execute(
       `select count(*) as count
        from information_schema.columns
-       where table_schema = ? and table_name = 'ssql_api_definitions' and column_name = 'sql_mode'`,
+       where table_schema = ? and table_name = 'adata_api_definitions' and column_name = 'sql_mode'`,
       [this.database.database]
     );
     if (Number(sqlModeRows[0].count) === 0) {
-      await this.pool.execute("alter table ssql_api_definitions add column sql_mode varchar(20) not null default 'sql' after sql_text");
-      const [apis] = await this.pool.execute("select id, sql_text from ssql_api_definitions");
+      await this.pool.execute("alter table adata_api_definitions add column sql_mode varchar(20) not null default 'sql' after sql_text");
+      const [apis] = await this.pool.execute("select id, sql_text from adata_api_definitions");
       for (const api of apis) {
         const sqlMode = detectSqlMode(api.sql_text);
         if (sqlMode === "xml") {
-          await this.pool.execute("update ssql_api_definitions set sql_mode = ? where id = ?", [sqlMode, api.id]);
+          await this.pool.execute("update adata_api_definitions set sql_mode = ? where id = ?", [sqlMode, api.id]);
         }
       }
-      if (this.logger) this.logger.info("mysql schema migrated", { table: "ssql_api_definitions", column: "sql_mode" });
+      if (this.logger) this.logger.info("mysql schema migrated", { table: "adata_api_definitions", column: "sql_mode" });
     }
 
     const [paramScriptRows] = await this.pool.execute(
       `select count(*) as count
        from information_schema.columns
-       where table_schema = ? and table_name = 'ssql_api_definitions' and column_name = 'param_script_text'`,
+       where table_schema = ? and table_name = 'adata_api_definitions' and column_name = 'param_script_text'`,
       [this.database.database]
     );
     if (Number(paramScriptRows[0].count) === 0) {
-      await this.pool.execute("alter table ssql_api_definitions add column param_script_text mediumtext after sql_mode");
-      if (this.logger) this.logger.info("mysql schema migrated", { table: "ssql_api_definitions", column: "param_script_text" });
+      await this.pool.execute("alter table adata_api_definitions add column param_script_text mediumtext after sql_mode");
+      if (this.logger) this.logger.info("mysql schema migrated", { table: "adata_api_definitions", column: "param_script_text" });
     }
 
     const [databaseAliasRows] = await this.pool.execute(
       `select count(*) as count
        from information_schema.columns
-       where table_schema = ? and table_name = 'ssql_api_definitions' and column_name = 'database_alias'`,
+       where table_schema = ? and table_name = 'adata_api_definitions' and column_name = 'database_alias'`,
       [this.database.database]
     );
     if (Number(databaseAliasRows[0].count) === 0) {
-      await this.pool.execute("alter table ssql_api_definitions add column database_alias varchar(100) not null default 'default' after test_params");
+      await this.pool.execute("alter table adata_api_definitions add column database_alias varchar(100) not null default 'default' after test_params");
       if (this.defaultDatabaseAlias !== "default") {
-        await this.pool.execute("update ssql_api_definitions set database_alias = ? where database_alias = 'default'", [this.defaultDatabaseAlias]);
+        await this.pool.execute("update adata_api_definitions set database_alias = ? where database_alias = 'default'", [this.defaultDatabaseAlias]);
       }
-      if (this.logger) this.logger.info("mysql schema migrated", { table: "ssql_api_definitions", column: "database_alias" });
+      if (this.logger) this.logger.info("mysql schema migrated", { table: "adata_api_definitions", column: "database_alias" });
     }
 
     const [scriptCapabilitiesRows] = await this.pool.execute(
       `select count(*) as count
        from information_schema.columns
-       where table_schema = ? and table_name = 'ssql_api_definitions' and column_name = 'script_capabilities'`,
+       where table_schema = ? and table_name = 'adata_api_definitions' and column_name = 'script_capabilities'`,
       [this.database.database]
     );
     if (Number(scriptCapabilitiesRows[0].count) === 0) {
-      await this.pool.execute("alter table ssql_api_definitions add column script_capabilities longtext after script_timeout_ms");
-      if (this.logger) this.logger.info("mysql schema migrated", { table: "ssql_api_definitions", column: "script_capabilities" });
+      await this.pool.execute("alter table adata_api_definitions add column script_capabilities longtext after script_timeout_ms");
+      if (this.logger) this.logger.info("mysql schema migrated", { table: "adata_api_definitions", column: "script_capabilities" });
     }
 
   }
 
   async migrateJsonApis() {
     // 只有 MySQL 定义表为空时才从旧 apis.json 迁移，避免覆盖线上数据。
-    const [rows] = await this.pool.execute("select count(*) as count from ssql_api_definitions");
+    const [rows] = await this.pool.execute("select count(*) as count from adata_api_definitions");
     if (Number(rows[0].count) > 0) return;
 
     const apisFile = path.join(this.dataDir, "apis.json");
@@ -220,7 +257,18 @@ class Store {
       sqlTimeoutMs: Number(row.sql_timeout_ms || 5000),
       scriptTimeoutMs: Number(row.script_timeout_ms || 1000),
       scriptCapabilities: normalizeScriptCapabilities(fromJson(row.script_capabilities, [])),
+      tagIds: [],
+      tags: [],
       deletedAt: row.deleted_at || null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  mapTag(row) {
+    return {
+      id: row.id,
+      name: row.name,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
@@ -270,18 +318,108 @@ class Store {
       sqlTimeoutMs: Number(payload.sqlTimeoutMs || existing.sqlTimeoutMs || 5000),
       scriptTimeoutMs: Number(payload.scriptTimeoutMs || existing.scriptTimeoutMs || 1000),
       scriptCapabilities: normalizeScriptCapabilities(payload.scriptCapabilities, existing.scriptCapabilities || []),
+      tagIds: normalizeTagIds(payload.tagIds !== undefined ? payload.tagIds : payload.tags !== undefined ? payload.tags : existing.tagIds || []),
       deletedAt: payload.deletedAt === undefined ? existing.deletedAt || null : payload.deletedAt,
       createdAt: existing.createdAt || payload.createdAt || now(),
       updatedAt: now()
     };
   }
 
+  async listTags() {
+    const [rows] = await this.pool.execute(`
+      select *
+      from adata_tags
+      where deleted_at is null
+      order by name asc
+    `);
+    return rows.map((row) => this.mapTag(row));
+  }
+
+  async createTag(payload) {
+    const name = normalizeTagName(payload.name);
+    if (!name) throw new AppError(400, "tag name is required");
+    const id = randomUUID();
+    const timestamp = now();
+    try {
+      await this.pool.execute(
+        `insert into adata_tags (id, name, deleted_at, created_at, updated_at)
+         values (?, ?, null, ?, ?)`,
+        [id, name, timestamp, timestamp]
+      );
+    } catch (error) {
+      if (error && error.code === "ER_DUP_ENTRY") throw new AppError(409, "tag name already exists");
+      throw error;
+    }
+    return { id, name, createdAt: timestamp, updatedAt: timestamp };
+  }
+
+  async listApiTags(apiIds) {
+    const ids = normalizeTagIds(apiIds);
+    const tagMap = new Map(ids.map((id) => [id, []]));
+    if (ids.length === 0) return tagMap;
+
+    const placeholders = ids.map(() => "?").join(", ");
+    const [rows] = await this.pool.execute(
+      `select api_tag.api_id, t.id, t.name, t.created_at, t.updated_at
+       from adata_api_tags api_tag
+       join adata_tags t on t.id = api_tag.tag_id and t.deleted_at is null
+       where api_tag.api_id in (${placeholders})
+       order by t.name asc`,
+      ids
+    );
+    for (const row of rows) {
+      if (!tagMap.has(row.api_id)) tagMap.set(row.api_id, []);
+      tagMap.get(row.api_id).push(this.mapTag(row));
+    }
+    return tagMap;
+  }
+
+  async attachTagsToApis(apis) {
+    const tagMap = await this.listApiTags(apis.map((api) => api.id));
+    return apis.map((api) => {
+      const tags = tagMap.get(api.id) || [];
+      return {
+        ...api,
+        tagIds: tags.map((tag) => tag.id),
+        tags
+      };
+    });
+  }
+
+  async assertTagIdsExist(tagIds) {
+    const ids = normalizeTagIds(tagIds);
+    if (ids.length === 0) return ids;
+    const placeholders = ids.map(() => "?").join(", ");
+    const [rows] = await this.pool.execute(
+      `select id
+       from adata_tags
+       where deleted_at is null and id in (${placeholders})`,
+      ids
+    );
+    const existing = new Set(rows.map((row) => row.id));
+    const missing = ids.filter((id) => !existing.has(id));
+    if (missing.length > 0) throw new AppError(400, "selected tag does not exist");
+    return ids;
+  }
+
+  async setApiTags(apiId, tagIds) {
+    const ids = await this.assertTagIdsExist(tagIds);
+    await this.pool.execute("delete from adata_api_tags where api_id = ?", [apiId]);
+    for (const tagId of ids) {
+      await this.pool.execute(
+        "insert into adata_api_tags (api_id, tag_id, created_at) values (?, ?, ?)",
+        [apiId, tagId, now()]
+      );
+    }
+  }
+
   async listApis(options = {}) {
-    // 列表页支持按名称和 SQL 内容筛选，分页参数在这里做边界限制。
+    // 列表页支持按名称、SQL 内容和标签筛选；多标签筛选要求 API 同时包含所有选中标签。
     let page = Math.max(1, Number(options.page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(options.pageSize) || 20));
     const name = String(options.name || "").trim();
     const sql = String(options.sql || "").trim();
+    const tagIds = normalizeTagIds(options.tagIds || options.tags);
     const where = ["deleted_at is null"];
     const params = [];
 
@@ -295,10 +433,22 @@ class Store {
       params.push(`%${escapeLike(sql)}%`);
     }
 
+    if (tagIds.length > 0) {
+      const placeholders = tagIds.map(() => "?").join(", ");
+      where.push(`id in (
+        select api_id
+        from adata_api_tags
+        where tag_id in (${placeholders})
+        group by api_id
+        having count(distinct tag_id) = ?
+      )`);
+      params.push(...tagIds, tagIds.length);
+    }
+
     const whereSql = where.join(" and ");
     const [countRows] = await this.pool.execute(
       `select count(*) as total
-       from ssql_api_definitions
+       from adata_api_definitions
        where ${whereSql}`,
       params
     );
@@ -308,7 +458,7 @@ class Store {
     const offset = (page - 1) * pageSize;
     const [rows] = await this.pool.execute(
       `select *
-       from ssql_api_definitions
+       from adata_api_definitions
        where ${whereSql}
        order by updated_at desc
        limit ${pageSize} offset ${offset}`,
@@ -316,7 +466,7 @@ class Store {
     );
 
     return {
-      items: rows.map((row) => this.mapApi(row)),
+      items: await this.attachTagsToApis(rows.map((row) => this.mapApi(row))),
       total,
       page,
       pageSize,
@@ -326,25 +476,28 @@ class Store {
 
   async getApi(id) {
     const [rows] = await this.pool.execute(
-      "select * from ssql_api_definitions where id = ? and deleted_at is null",
+      "select * from adata_api_definitions where id = ? and deleted_at is null",
       [id]
     );
     if (rows.length === 0) throw new AppError(404, "api not found");
-    return this.mapApi(rows[0]);
+    const apis = await this.attachTagsToApis([this.mapApi(rows[0])]);
+    return apis[0];
   }
 
   async findByPathAndMethod(apiPath, method) {
     const [rows] = await this.pool.execute(
-      "select * from ssql_api_definitions where path = ? and method = ? and deleted_at is null limit 1",
+      "select * from adata_api_definitions where path = ? and method = ? and deleted_at is null limit 1",
       [apiPath, method.toUpperCase()]
     );
-    return rows.length > 0 ? this.mapApi(rows[0]) : null;
+    if (rows.length === 0) return null;
+    const apis = await this.attachTagsToApis([this.mapApi(rows[0])]);
+    return apis[0];
   }
 
   async assertUniquePath(apiPath, method, ignoreId = null) {
     // 动态接口以 path + method 作为唯一访问入口，发布前后都不能冲突。
     const params = [apiPath, method.toUpperCase()];
-    let sql = "select id from ssql_api_definitions where path = ? and method = ? and deleted_at is null";
+    let sql = "select id from adata_api_definitions where path = ? and method = ? and deleted_at is null";
     if (ignoreId) {
       sql += " and id <> ?";
       params.push(ignoreId);
@@ -356,7 +509,7 @@ class Store {
 
   async insertApi(api) {
     await this.pool.execute(
-      `insert into ssql_api_definitions (
+      `insert into adata_api_definitions (
         id, name, path, method, status, description, request_params, test_params,
         database_alias, sql_text, sql_mode, param_script_text, script_text, sql_timeout_ms, script_timeout_ms,
         script_capabilities, deleted_at, created_at, updated_at
@@ -383,7 +536,8 @@ class Store {
         api.updatedAt
       ]
     );
-    return api;
+    await this.setApiTags(api.id, api.tagIds);
+    return (await this.attachTagsToApis([api]))[0];
   }
 
   async createApi(payload) {
@@ -393,6 +547,7 @@ class Store {
       createdAt: now()
     });
     await this.assertUniquePath(api.path, api.method);
+    await this.assertTagIdsExist(api.tagIds);
     return this.insertApi(api);
   }
 
@@ -400,8 +555,9 @@ class Store {
     const existing = await this.getApi(id);
     const api = this.normalizePayload(payload, existing);
     await this.assertUniquePath(api.path, api.method, id);
+    await this.assertTagIdsExist(api.tagIds);
     await this.pool.execute(
-      `update ssql_api_definitions
+      `update adata_api_definitions
        set name = ?,
            path = ?,
            method = ?,
@@ -441,7 +597,8 @@ class Store {
         id
       ]
     );
-    return api;
+    await this.setApiTags(id, api.tagIds);
+    return (await this.attachTagsToApis([api]))[0];
   }
 
   async updateStatus(id, status) {
@@ -458,7 +615,7 @@ class Store {
   async addLog(log) {
     // 运行时无论成功失败都会写入调用日志，失败原因由 errorMessage 记录。
     await this.pool.execute(
-      `insert into ssql_api_call_logs (
+      `insert into adata_api_call_logs (
         id, request_id, parent_request_id, api_id, path, method, status_code,
         duration_ms, error_message, call_chain, created_at
       ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -481,7 +638,7 @@ class Store {
   async listLogs() {
     const [rows] = await this.pool.execute(`
       select *
-      from ssql_api_call_logs
+      from adata_api_call_logs
       order by created_at desc
       limit 1000
     `);
@@ -490,5 +647,7 @@ class Store {
 }
 
 module.exports = {
-  Store
+  Store,
+  normalizeTagIds,
+  normalizeTagName
 };

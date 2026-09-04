@@ -26,6 +26,7 @@ const contentTypes = {
 
 function sendJson(res, statusCode, body) {
   // 管理端和动态 API 都返回 JSON，同时开放跨域方便前端调试。
+  if (res.writableEnded || res.destroyed) return;
   res.statusCode = statusCode;
   res.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
@@ -81,6 +82,15 @@ function getQueryParams(url) {
 
 function pathParts(urlPath) {
   return urlPath.split("/").filter(Boolean);
+}
+
+function createResponseAbortSignal(res) {
+  const controller = new AbortController();
+  res.on("close", () => {
+    // 浏览器取消测试请求时，响应会提前关闭；测试链路据此中断 Worker 或数据库查询。
+    if (!res.writableEnded) controller.abort();
+  });
+  return controller.signal;
 }
 
 function serveStatic(req, res, urlPath) {
@@ -158,6 +168,18 @@ async function handleAdmin(req, res, url, body) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/admin/tags") {
+    sendOk(res, await store.listTags());
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/admin/tags") {
+    const tag = await store.createTag(body);
+    logger.info("admin tag created", { tagId: tag.id, name: tag.name });
+    sendOk(res, tag);
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/admin/apis") {
     const query = getQueryParams(url);
     logger.info("admin api list", query);
@@ -206,6 +228,7 @@ async function handleAdmin(req, res, url, body) {
 
     if (req.method === "POST" && parts[3] === "test-sql") {
       // SQL 测试会先跑参数处理脚本，再执行查询并返回字段信息。
+      const abortSignal = createResponseAbortSignal(res);
       const api = await store.getApi(id);
       const params = body.params || api.testParams || {};
       const processed = await runtime.runParamScript(api, params, {
@@ -215,7 +238,8 @@ async function handleAdmin(req, res, url, body) {
         debugCallChain: [api.path],
         allowDraft: true,
         userId: 1,
-        roles: ["admin"]
+        roles: ["admin"],
+        signal: abortSignal
       });
       if (processed.directReturn) {
         sendOk(res, {
@@ -231,7 +255,7 @@ async function handleAdmin(req, res, url, body) {
         });
         return;
       }
-      const result = await executeSqlWithFields(config.database, api, processed.params);
+      const result = await executeSqlWithFields(config.database, api, processed.params, null, { signal: abortSignal });
       const rows = result.rows;
       logger.info("admin sql tested", { apiId: api.id, path: api.path, rows: rows.length });
       sendOk(res, {
@@ -248,6 +272,7 @@ async function handleAdmin(req, res, url, body) {
 
     if (req.method === "POST" && parts[3] === "test-script") {
       // 结果集脚本测试会先跑参数处理脚本；没有传入 rows 时再跑 SQL，贴近真实调用链路。
+      const abortSignal = createResponseAbortSignal(res);
       const api = await store.getApi(id);
       const params = body.params || api.testParams || {};
       const processed = await runtime.runParamScript(api, params, {
@@ -257,7 +282,8 @@ async function handleAdmin(req, res, url, body) {
         debugCallChain: [api.path],
         allowDraft: true,
         userId: 1,
-        roles: ["admin"]
+        roles: ["admin"],
+        signal: abortSignal
       });
       if (processed.directReturn) {
         sendOk(res, {
@@ -273,7 +299,7 @@ async function handleAdmin(req, res, url, body) {
       }
       const sqlResult = Array.isArray(body.rows)
         ? { rows: body.rows, resultSets: [{ fields: [], rows: body.rows }] }
-        : await executeSqlWithFields(config.database, api, processed.params);
+        : await executeSqlWithFields(config.database, api, processed.params, null, { signal: abortSignal });
       const rows = sqlResult.rows;
       const scriptContext = {
         requestId: `test-${Date.now()}`,
@@ -293,6 +319,7 @@ async function handleAdmin(req, res, url, body) {
         timeoutMs: api.scriptTimeoutMs || config.scriptTimeoutMs,
         maxCallDepth: config.maxCallDepth,
         scriptWorker: config.scriptWorker,
+        signal: abortSignal,
         executeCapability: (name, args) => runtime.executeScriptCapability(api, scriptContext, name, args),
         callApi: async (apiPath, callParams, callOptions) => {
           // 管理端测试允许调用草稿接口，方便联调未发布的内部依赖。

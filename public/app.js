@@ -2,11 +2,21 @@ const state = {
   // 页面级状态集中保存，避免多个控件各自维护重复数据。
   apis: [],
   current: null,
+  tags: [],
+  apiTagIds: [],
+  apiSavedTagIds: [],
+  searchTagIds: [],
+  tagSelectMode: "api",
+  testControllers: {
+    sql: null,
+    script: null
+  },
   databaseSources: [],
   defaultDatabaseAlias: "default",
   list: {
     name: "",
     sql: "",
+    tagIds: [],
     page: 1,
     pageSize: 20,
     total: 0,
@@ -47,9 +57,12 @@ const els = {
   // DOM 引用只在启动时获取一次，后续逻辑通过 els 访问页面控件。
   apiList: document.getElementById("apiList"),
   newApiBtn: document.getElementById("newApiBtn"),
+  tagManageBtn: document.getElementById("tagManageBtn"),
   apiSearchForm: document.getElementById("apiSearchForm"),
   nameSearchInput: document.getElementById("nameSearchInput"),
   sqlSearchInput: document.getElementById("sqlSearchInput"),
+  searchTagSelectBtn: document.getElementById("searchTagSelectBtn"),
+  searchTagSummary: document.getElementById("searchTagSummary"),
   pageSizeInput: document.getElementById("pageSizeInput"),
   resetSearchBtn: document.getElementById("resetSearchBtn"),
   prevPageBtn: document.getElementById("prevPageBtn"),
@@ -69,6 +82,20 @@ const els = {
   databaseAliasInput: document.getElementById("databaseAliasInput"),
   sqlTimeoutInput: document.getElementById("sqlTimeoutInput"),
   scriptTimeoutInput: document.getElementById("scriptTimeoutInput"),
+  apiTagSelectBtn: document.getElementById("apiTagSelectBtn"),
+  apiTagSummary: document.getElementById("apiTagSummary"),
+  tagSelectModal: document.getElementById("tagSelectModal"),
+  tagSelectCloseBtn: document.getElementById("tagSelectCloseBtn"),
+  tagSelectList: document.getElementById("tagSelectList"),
+  tagSelectCancelBtn: document.getElementById("tagSelectCancelBtn"),
+  tagSelectApplyBtn: document.getElementById("tagSelectApplyBtn"),
+  tagModal: document.getElementById("tagModal"),
+  tagCloseBtn: document.getElementById("tagCloseBtn"),
+  tagCreateForm: document.getElementById("tagCreateForm"),
+  tagNameInput: document.getElementById("tagNameInput"),
+  tagAddBtn: document.getElementById("tagAddBtn"),
+  tagDoneBtn: document.getElementById("tagDoneBtn"),
+  tagManageList: document.getElementById("tagManageList"),
   capabilitySummary: document.getElementById("capabilitySummary"),
   capabilityOpenBtn: document.getElementById("capabilityOpenBtn"),
   capabilityModal: document.getElementById("capabilityModal"),
@@ -87,7 +114,9 @@ const els = {
   sqlHelpCloseBtn: document.getElementById("sqlHelpCloseBtn"),
   sqlHelpContent: document.getElementById("sqlHelpContent"),
   runSqlBtn: document.getElementById("runSqlBtn"),
+  abortSqlBtn: document.getElementById("abortSqlBtn"),
   runScriptBtn: document.getElementById("runScriptBtn"),
+  abortScriptBtn: document.getElementById("abortScriptBtn"),
   logBox: document.getElementById("logBox"),
   rowFieldsInfo: document.getElementById("rowFieldsInfo"),
   sqlInput: document.getElementById("sqlInput"),
@@ -282,6 +311,43 @@ function setButtonLoading(button, loading, text) {
   button.disabled = Boolean(loading);
   button.classList.toggle("loading", Boolean(loading));
   button.textContent = loading ? text : button.dataset.defaultText;
+}
+
+function isAbortError(error) {
+  return error?.name === "AbortError";
+}
+
+function setTestRunning(type, running) {
+  const isSql = type === "sql";
+  const runButton = isSql ? els.runSqlBtn : els.runScriptBtn;
+  const abortButton = isSql ? els.abortSqlBtn : els.abortScriptBtn;
+  setButtonLoading(runButton, running, "测试中...");
+  if (abortButton) {
+    abortButton.disabled = !running;
+    abortButton.classList.toggle("hidden", !running);
+  }
+}
+
+function beginTestRun(type) {
+  // 每类测试只保留一个 AbortController，避免重复点击导致日志和按钮状态互相覆盖。
+  if (state.testControllers[type]) return null;
+  const controller = new AbortController();
+  state.testControllers[type] = controller;
+  setTestRunning(type, true);
+  return controller;
+}
+
+function finishTestRun(type, controller) {
+  if (state.testControllers[type] !== controller) return;
+  state.testControllers[type] = null;
+  setTestRunning(type, false);
+}
+
+function abortTestRun(type) {
+  const controller = state.testControllers[type];
+  if (!controller) return;
+  controller.abort();
+  showStatus(type === "sql" ? "正在中断 SQL 测试..." : "正在中断 JS 测试...");
 }
 
 function showLog(value) {
@@ -714,6 +780,125 @@ function renderDatabaseOptions(selectedAlias) {
     els.databaseAliasInput.appendChild(option);
   }
   els.databaseAliasInput.value = sources.some((source) => source.alias === selected) ? selected : getDefaultDatabaseAlias();
+}
+
+function normalizeTagIds(value) {
+  const items = Array.isArray(value)
+    ? value
+    : String(value || "").split(",");
+  return [...new Set(items
+    .map((item) => typeof item === "object" && item ? item.id : item)
+    .map((item) => String(item || "").trim())
+    .filter(Boolean))];
+}
+
+function readCheckedTagIds(name) {
+  return [...document.querySelectorAll(`input[name="${name}"]:checked`)].map((input) => input.value);
+}
+
+function renderTagChoices(container, inputName, selectedIds, emptyText) {
+  const selected = new Set(normalizeTagIds(selectedIds));
+  container.innerHTML = "";
+  if (state.tags.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "tag-empty";
+    empty.textContent = emptyText;
+    container.appendChild(empty);
+    return;
+  }
+
+  for (const tag of state.tags) {
+    const label = document.createElement("label");
+    label.className = "tag-option";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.name = inputName;
+    input.value = tag.id;
+    input.checked = selected.has(tag.id);
+    const text = document.createElement("span");
+    text.textContent = tag.name;
+    label.append(input, text);
+    container.appendChild(label);
+  }
+}
+
+function renderTagManageList() {
+  els.tagManageList.innerHTML = "";
+  if (state.tags.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "tag-empty";
+    empty.textContent = "暂无标签";
+    els.tagManageList.appendChild(empty);
+    return;
+  }
+
+  for (const tag of state.tags) {
+    const item = document.createElement("span");
+    item.className = "tag-chip";
+    item.textContent = tag.name;
+    els.tagManageList.appendChild(item);
+  }
+}
+
+function renderApiTagSummary(apiTagIds = state.apiTagIds) {
+  // API 标签选择在弹窗中完成；表单区只回显结果，并用颜色区分已保存和待保存。
+  const selectedIds = normalizeTagIds(apiTagIds);
+  const savedIds = new Set(state.apiSavedTagIds);
+  const tagById = new Map(state.tags.map((tag) => [tag.id, tag]));
+  state.apiTagIds = selectedIds;
+  els.apiTagSummary.innerHTML = "";
+
+  if (selectedIds.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "tag-empty";
+    empty.textContent = state.tags.length === 0 ? "暂无标签，可先到标签管理新增" : "未选择标签";
+    els.apiTagSummary.appendChild(empty);
+    return;
+  }
+
+  for (const tagId of selectedIds) {
+    const tag = tagById.get(tagId) || { id: tagId, name: tagId };
+    const chip = document.createElement("span");
+    chip.className = `tag-chip ${savedIds.has(tag.id) ? "saved" : "pending"}`;
+    chip.textContent = tag.name;
+    els.apiTagSummary.appendChild(chip);
+  }
+}
+
+function renderSearchTagSummary(searchTagIds = state.searchTagIds) {
+  const selectedIds = normalizeTagIds(searchTagIds);
+  const tagById = new Map(state.tags.map((tag) => [tag.id, tag]));
+  state.searchTagIds = selectedIds;
+  els.searchTagSummary.innerHTML = "";
+
+  if (selectedIds.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "tag-empty";
+    empty.textContent = state.tags.length === 0 ? "暂无标签" : "未选择标签";
+    els.searchTagSummary.appendChild(empty);
+    return;
+  }
+
+  for (const tagId of selectedIds) {
+    const tag = tagById.get(tagId) || { id: tagId, name: tagId };
+    const chip = document.createElement("span");
+    chip.className = "tag-chip";
+    chip.textContent = tag.name;
+    els.searchTagSummary.appendChild(chip);
+  }
+}
+
+function renderTagControls(apiTagIds = state.apiTagIds, searchTagIds = state.searchTagIds) {
+  renderApiTagSummary(apiTagIds);
+  renderSearchTagSummary(searchTagIds);
+  renderTagManageList();
+}
+
+async function loadTags() {
+  const apiTagIds = state.apiTagIds;
+  const searchTagIds = state.searchTagIds;
+  state.tags = await request("/admin/tags");
+  renderTagControls(apiTagIds, searchTagIds);
 }
 
 function collectRowFields(rows) {
@@ -1546,6 +1731,7 @@ function readForm() {
     databaseAlias: els.databaseAliasInput.value || getDefaultDatabaseAlias(),
     sqlTimeoutMs: timeoutSecondsToMs(els.sqlTimeoutInput.value, 5),
     scriptTimeoutMs: timeoutSecondsToMs(els.scriptTimeoutInput.value, 1),
+    tagIds: state.apiTagIds,
     description: els.descriptionInput.value.trim(),
     testParams: readParamsEditor(),
     sqlMode: els.sqlModeInput.value,
@@ -1574,6 +1760,9 @@ function fillForm(api, options = {}) {
   renderDatabaseOptions(api.databaseAlias || getDefaultDatabaseAlias());
   els.sqlTimeoutInput.value = String(timeoutMsToSeconds(api.sqlTimeoutMs, 5000));
   els.scriptTimeoutInput.value = String(timeoutMsToSeconds(api.scriptTimeoutMs, 1000));
+  state.apiSavedTagIds = normalizeTagIds(api.tagIds || api.tags || []);
+  state.apiTagIds = [...state.apiSavedTagIds];
+  renderTagControls(state.apiTagIds);
   fillScriptCapabilities(api.scriptCapabilities);
   els.descriptionInput.value = api.description || "";
   state.editors.params.setValue(JSON.stringify(api.testParams || {}, null, 2));
@@ -1631,7 +1820,17 @@ function renderList() {
     path.className = "api-path";
     path.textContent = api.path || "/api/";
 
+    const tags = document.createElement("div");
+    tags.className = "api-item-tags";
+    for (const tag of api.tags || []) {
+      const chip = document.createElement("span");
+      chip.className = "tag-chip";
+      chip.textContent = tag.name;
+      tags.appendChild(chip);
+    }
+
     const children = [meta, name, path];
+    if (tags.childNodes.length > 0) children.push(tags);
     if (active) {
       const description = document.createElement("span");
       description.className = "api-description";
@@ -1656,6 +1855,7 @@ function buildApiListPath() {
   });
   if (state.list.name) params.set("name", state.list.name);
   if (state.list.sql) params.set("sql", state.list.sql);
+  if (state.list.tagIds.length > 0) params.set("tagIds", state.list.tagIds.join(","));
   return `/admin/apis?${params.toString()}`;
 }
 
@@ -1724,20 +1924,28 @@ async function saveApi(options = {}) {
 
 async function runSql() {
   // 测试 SQL 前先保存当前 API，确保后端测试使用的是最新配置。
+  const controller = beginTestRun("sql");
+  if (!controller) return;
   let params = {};
   try {
     params = readParamsEditor();
   } catch (error) {
     showStatus(`示例参数 JSON 无效: ${error.message}`);
+    finishTestRun("sql", controller);
     return;
   }
 
-  setButtonLoading(els.runSqlBtn, true, "测试中...");
   try {
     const api = await saveApi({ notify: false });
+    if (controller.signal.aborted) {
+      showLog("SQL 测试已中断");
+      showStatus("SQL 测试已中断");
+      return;
+    }
     showLog("SQL 测试中...");
     const data = await request(`/admin/apis/${api.id}/test-sql`, {
       method: "POST",
+      signal: controller.signal,
       body: JSON.stringify({ params })
     });
     const fields = Array.isArray(data.fields) && data.fields.length > 0
@@ -1761,27 +1969,42 @@ async function runSql() {
     } else {
       showStatus(`SQL 测试完成 · ${data.total} 行 · rows ${fields.length} 个字段`);
     }
+  } catch (error) {
+    if (isAbortError(error) || controller.signal.aborted) {
+      showLog("SQL 测试已中断");
+      showStatus("SQL 测试已中断");
+      return;
+    }
+    throw error;
   } finally {
-    setButtonLoading(els.runSqlBtn, false);
+    finishTestRun("sql", controller);
   }
 }
 
 async function runScriptTest() {
   // JS 测试复用真实链路：先执行参数处理，再准备 SQL 结果，最后执行结果集处理脚本。
+  const controller = beginTestRun("script");
+  if (!controller) return;
   let params = {};
   try {
     params = readParamsEditor();
   } catch (error) {
     showStatus(`示例参数 JSON 无效: ${error.message}`);
+    finishTestRun("script", controller);
     return;
   }
 
-  setButtonLoading(els.runScriptBtn, true, "测试中...");
   try {
     const api = await saveApi({ notify: false });
+    if (controller.signal.aborted) {
+      showLog("JS 测试已中断");
+      showStatus("JS 测试已中断");
+      return;
+    }
     showLog("JS 测试中...");
     const data = await request(`/admin/apis/${api.id}/test-script`, {
       method: "POST",
+      signal: controller.signal,
       body: JSON.stringify({ params })
     });
     const resultSets = data.resultSets || [];
@@ -1802,8 +2025,15 @@ async function runScriptTest() {
     if (!data.directReturn) saveCachedSqlResult(api, logData);
     showLog(data.result);
     showStatus(data.directReturn ? "参数处理脚本已直接返回" : `JS 测试完成 · rows ${fields.length} 个字段`);
+  } catch (error) {
+    if (isAbortError(error) || controller.signal.aborted) {
+      showLog("JS 测试已中断");
+      showStatus("JS 测试已中断");
+      return;
+    }
+    throw error;
   } finally {
-    setButtonLoading(els.runScriptBtn, false);
+    finishTestRun("script", controller);
   }
 }
 
@@ -1871,6 +2101,95 @@ function setupCapabilityModal() {
   });
 }
 
+function openTagModal() {
+  renderTagManageList();
+  els.tagModal.classList.remove("hidden");
+  els.tagNameInput.focus();
+}
+
+function closeTagModal() {
+  els.tagModal.classList.add("hidden");
+  els.tagNameInput.value = "";
+}
+
+function openTagSelectModal(mode = "api") {
+  state.tagSelectMode = mode === "search" ? "search" : "api";
+  const selectedIds = state.tagSelectMode === "search" ? state.searchTagIds : state.apiTagIds;
+  const title = state.tagSelectMode === "search" ? "选择筛选标签" : "选择 API 标签";
+  document.getElementById("tagSelectModalTitle").textContent = title;
+  renderTagChoices(els.tagSelectList, "tagSelect", selectedIds, "暂无标签，可先到标签管理新增");
+  els.tagSelectModal.classList.remove("hidden");
+}
+
+function closeTagSelectModal() {
+  els.tagSelectModal.classList.add("hidden");
+}
+
+function applyTagSelection() {
+  const selectedIds = readCheckedTagIds("tagSelect");
+  if (state.tagSelectMode === "search") {
+    state.searchTagIds = selectedIds;
+    renderSearchTagSummary(state.searchTagIds);
+    showStatus("筛选标签已更新，点击查找后生效");
+  } else {
+    state.apiTagIds = selectedIds;
+    renderApiTagSummary(state.apiTagIds);
+    showStatus("API 标签选择已更新，保存后生效");
+  }
+  closeTagSelectModal();
+}
+
+async function createTag(event) {
+  event.preventDefault();
+  const name = els.tagNameInput.value.trim();
+  if (!name) {
+    showToast("标签名称不能为空", "error");
+    return;
+  }
+
+  setButtonLoading(els.tagAddBtn, true, "新增中...");
+  try {
+    await request("/admin/tags", {
+      method: "POST",
+      body: JSON.stringify({ name })
+    });
+    els.tagNameInput.value = "";
+    await loadTags();
+    showToast("标签已新增");
+  } finally {
+    setButtonLoading(els.tagAddBtn, false);
+  }
+}
+
+function setupTags() {
+  els.apiTagSelectBtn.addEventListener("click", () => openTagSelectModal("api"));
+  els.searchTagSelectBtn.addEventListener("click", () => openTagSelectModal("search"));
+  els.tagSelectCloseBtn.addEventListener("click", closeTagSelectModal);
+  els.tagSelectCancelBtn.addEventListener("click", closeTagSelectModal);
+  els.tagSelectApplyBtn.addEventListener("click", applyTagSelection);
+  els.tagManageBtn.addEventListener("click", openTagModal);
+  els.tagCloseBtn.addEventListener("click", closeTagModal);
+  els.tagDoneBtn.addEventListener("click", closeTagModal);
+  els.tagCreateForm.addEventListener("submit", (event) => {
+    runEditorAction(() => createTag(event));
+  });
+  els.tagModal.addEventListener("click", (event) => {
+    if (event.target === els.tagModal) closeTagModal();
+  });
+  els.tagSelectModal.addEventListener("click", (event) => {
+    if (event.target === els.tagSelectModal) closeTagSelectModal();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.tagSelectModal.classList.contains("hidden")) {
+      closeTagSelectModal();
+      return;
+    }
+    if (event.key === "Escape" && !els.tagModal.classList.contains("hidden")) {
+      closeTagModal();
+    }
+  });
+}
+
 function setupApiInfoCollapse() {
   els.apiInfoToggleBtn.addEventListener("click", () => {
     const collapsed = !isApiInfoCollapsed();
@@ -1906,6 +2225,8 @@ els.newApiBtn.addEventListener("click", () => {
     sqlTimeoutMs: 5000,
     scriptTimeoutMs: 1000,
     scriptCapabilities: [],
+    tagIds: [],
+    tags: [],
     status: "draft",
     testParams: {},
     sqlMode: "sql",
@@ -1920,6 +2241,7 @@ els.apiSearchForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   state.list.name = els.nameSearchInput.value.trim();
   state.list.sql = els.sqlSearchInput.value.trim();
+  state.list.tagIds = [...state.searchTagIds];
   state.list.pageSize = Number(els.pageSizeInput.value) || 20;
   state.list.page = 1;
   state.current = null;
@@ -1932,9 +2254,12 @@ els.resetSearchBtn.addEventListener("click", async () => {
   els.pageSizeInput.value = "20";
   state.list.name = "";
   state.list.sql = "";
+  state.list.tagIds = [];
+  state.searchTagIds = [];
   state.list.pageSize = 20;
   state.list.page = 1;
   state.current = null;
+  renderTagControls(state.current?.tagIds || []);
   await loadApis({ selectFirst: true });
 });
 
@@ -1960,6 +2285,7 @@ els.nextPageBtn.addEventListener("click", async () => {
 
 setupEditors();
 setupHelp();
+setupTags();
 setupCapabilityModal();
 setupApiInfoCollapse();
 setupEditorContextMenuLifecycle();
@@ -1967,8 +2293,10 @@ setupEditorContextMenuLifecycle();
 bind(els.saveBtn, saveApi);
 bind(els.statusToggleBtn, toggleApiStatus);
 bind(els.runSqlBtn, runSql);
+bind(els.abortSqlBtn, () => abortTestRun("sql"));
 bind(els.runScriptBtn, runScriptTest);
+bind(els.abortScriptBtn, () => abortTestRun("script"));
 
-loadDatabaseSources()
+Promise.all([loadDatabaseSources(), loadTags()])
   .then(() => loadApis())
   .catch((error) => showStatus(`加载失败: ${error.message}`));

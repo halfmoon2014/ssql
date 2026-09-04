@@ -73,8 +73,10 @@ npm install
 
 系统会把 API 配置和 API 调用日志写入配置中的第一个 MySQL 数据源。服务启动时会自动创建以下表:
 
-- `ssql_api_definitions`: 保存 API 配置、SQL、JS、测试参数和发布状态。
-- `ssql_api_call_logs`: 保存动态 API 调用日志。
+- `adata_api_definitions`: 保存 API 配置、SQL、JS、测试参数和发布状态。
+- `adata_tags`: 保存后台管理端可选标签。
+- `adata_api_tags`: 保存 API 与标签的多对多关联。
+- `adata_api_call_logs`: 保存动态 API 调用日志。
 
 旧版本如果已经存在 `data/apis.json`，服务首次启动且数据库表为空时，会自动把里面的 API 配置迁移到 MySQL。
 

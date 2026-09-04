@@ -44,6 +44,26 @@ test("runScript exposes controlled setTimeout and clearTimeout", async () => {
   assert.deepEqual(result, { ok: true, called: false });
 });
 
+test("runScript can be aborted by signal", async () => {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 20);
+
+  await assert.rejects(
+    () => runScript({
+      script: `
+        async function main() {
+          while (true) {}
+        }
+      `,
+      timeoutMs: 1000,
+      context: {},
+      signal: controller.signal,
+      callApi: async () => null
+    }),
+    (error) => error.statusCode === 499 && error.message === "script test aborted"
+  );
+});
+
 test("runScript exposes safe context fields including scriptType", async () => {
   const result = await runScript({
     script: `
