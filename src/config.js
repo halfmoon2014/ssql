@@ -179,6 +179,11 @@ function stringFromEnv(name, fallback) {
   return output;
 }
 
+function optionalStringFromEnv(name, fallback) {
+  const value = process.env[name];
+  return value === undefined || value === "" ? fallback : value;
+}
+
 function booleanFromEnv(name, fallback) {
   const value = process.env[name];
   if (value === undefined || value === "") return Boolean(fallback);
@@ -197,13 +202,53 @@ function resolveProjectPath(value) {
   return path.isAbsolute(raw) ? raw : path.join(rootDir, raw);
 }
 
+function normalizePositiveNumber(value, fallback) {
+  const number = value === undefined || value === null || value === "" ? Number(fallback) : Number(value);
+  if (!Number.isFinite(number) || number < 1) return Number(fallback);
+  return Math.floor(number);
+}
+
+function normalizeNonNegativeNumber(value, fallback) {
+  const number = value === undefined || value === null || value === "" ? Number(fallback) : Number(value);
+  if (!Number.isFinite(number) || number < 0) return Number(fallback);
+  return Math.floor(number);
+}
+
+function normalizeDatasourceConcurrency(raw, fallback) {
+  const source = raw || {};
+  return {
+    enabled: source.enabled !== false,
+    max: normalizePositiveNumber(source.max, fallback.max),
+    queueLimit: normalizeNonNegativeNumber(source.queueLimit, fallback.queueLimit),
+    queueTimeoutMs: normalizeNonNegativeNumber(source.queueTimeoutMs, fallback.queueTimeoutMs)
+  };
+}
+
 function normalizeAppConfig(appConfig) {
   // 运行配置来自 app.config.jsonc；环境变量只作为部署时覆盖入口，不再承载默认值。
   const server = appConfig.server || {};
   const paths = appConfig.paths || {};
   const timeouts = appConfig.timeouts || {};
   const runtime = appConfig.runtime || {};
+  const sqlExecution = runtime.sqlExecution || {};
+  const businessPool = sqlExecution.businessPool || {};
+  const datasourceConcurrency = sqlExecution.datasourceConcurrency || {};
+  const defaultDatasourceConcurrency = {
+    enabled: true,
+    max: 10,
+    queueLimit: 100,
+    queueTimeoutMs: 3000
+  };
   const fileCapabilities = (appConfig.capabilities && appConfig.capabilities.files) || {};
+  const security = appConfig.security || {};
+  const normalizedDatasourceConcurrency = normalizeDatasourceConcurrency(
+    datasourceConcurrency.default,
+    defaultDatasourceConcurrency
+  );
+  const sourceConcurrency = {};
+  for (const [alias, value] of Object.entries(datasourceConcurrency.sources || {})) {
+    sourceConcurrency[alias] = normalizeDatasourceConcurrency(value, normalizedDatasourceConcurrency);
+  }
 
   return {
     port: numberFromEnv("PORT", server.port),
@@ -218,6 +263,30 @@ function normalizeAppConfig(appConfig) {
       maxOldGenerationSizeMb: numberFromEnv("SCRIPT_WORKER_MAX_OLD_MB", runtime.scriptWorker?.maxOldGenerationSizeMb || 32),
       maxYoungGenerationSizeMb: numberFromEnv("SCRIPT_WORKER_MAX_YOUNG_MB", runtime.scriptWorker?.maxYoungGenerationSizeMb || 8)
     },
+    sqlExecution: {
+      businessPool: {
+        mysql: {
+          waitForConnections: booleanFromEnv("SQL_POOL_MYSQL_WAIT_FOR_CONNECTIONS", businessPool.mysql?.waitForConnections ?? true),
+          connectionLimit: numberFromEnv("SQL_POOL_MYSQL_CONNECTION_LIMIT", businessPool.mysql?.connectionLimit || 10),
+          queueLimit: numberFromEnv("SQL_POOL_MYSQL_QUEUE_LIMIT", businessPool.mysql?.queueLimit ?? 0),
+          connectTimeoutMs: numberFromEnv("SQL_POOL_MYSQL_CONNECT_TIMEOUT_MS", businessPool.mysql?.connectTimeoutMs || 10000)
+        },
+        mssql: {
+          max: numberFromEnv("SQL_POOL_MSSQL_MAX", businessPool.mssql?.max || 10),
+          min: numberFromEnv("SQL_POOL_MSSQL_MIN", businessPool.mssql?.min || 0),
+          idleTimeoutMillis: numberFromEnv("SQL_POOL_MSSQL_IDLE_TIMEOUT_MS", businessPool.mssql?.idleTimeoutMillis || 30000)
+        }
+      },
+      datasourceConcurrency: {
+        default: {
+          enabled: booleanFromEnv("SQL_DATASOURCE_CONCURRENCY_ENABLED", normalizedDatasourceConcurrency.enabled),
+          max: numberFromEnv("SQL_DATASOURCE_CONCURRENCY_MAX", normalizedDatasourceConcurrency.max),
+          queueLimit: numberFromEnv("SQL_DATASOURCE_QUEUE_LIMIT", normalizedDatasourceConcurrency.queueLimit),
+          queueTimeoutMs: numberFromEnv("SQL_DATASOURCE_QUEUE_TIMEOUT_MS", normalizedDatasourceConcurrency.queueTimeoutMs)
+        },
+        sources: sourceConcurrency
+      }
+    },
     capabilities: {
       files: {
         tempDir: resolveProjectPath(stringFromEnv("FILE_CAPABILITY_TEMP_DIR", fileCapabilities.tempDir)),
@@ -229,6 +298,15 @@ function normalizeAppConfig(appConfig) {
           .map((item) => item.toLowerCase()),
         allowPrivateNetwork: booleanFromEnv("FILE_CAPABILITY_ALLOW_PRIVATE_NETWORK", fileCapabilities.allowPrivateNetwork)
       }
+    },
+    security: {
+      // security.enabled 默认关闭，方便先部署安全接口；打开后动态 API 会强制校验 Bearer token 和用户到 API 权限。
+      enabled: booleanFromEnv("SECURITY_ENABLED", security.enabled),
+      secretKey: optionalStringFromEnv("SECURITY_SECRET_KEY", security.secretKey || "ssql-dev-security-key"),
+      tokenTtlSeconds: numberFromEnv("SECURITY_TOKEN_TTL_SECONDS", security.tokenTtlSeconds || 8 * 60 * 60),
+      totpIssuer: optionalStringFromEnv("SECURITY_TOTP_ISSUER", security.totpIssuer || "SQL API"),
+      trustedProxies: listFromEnv("SECURITY_TRUSTED_PROXIES", security.trustedProxies),
+      adminIpWhitelistRequired: booleanFromEnv("SECURITY_ADMIN_IP_WHITELIST_REQUIRED", security.adminIpWhitelistRequired)
     }
   };
 }
@@ -240,7 +318,10 @@ function loadConfig() {
   return {
     ...appConfig,
     rootDir,
-    database: databaseConfig
+    database: {
+      ...databaseConfig,
+      sqlExecution: appConfig.sqlExecution
+    }
   };
 }
 

@@ -63,6 +63,9 @@
             <p id="statusText">创建并发布动态 API</p>
           </div>
           <div class="actions">
+            <span id="currentUserInfo" class="code-language">未登录</span>
+            <button id="authOpenBtn" type="button">登录</button>
+            <button id="securityOpenBtn" type="button">安全</button>
             <button id="saveBtn">保存</button>
             <button id="statusToggleBtn" class="primary">发布</button>
           </div>
@@ -198,6 +201,68 @@ SQL 执行后运行，main 的返回值就是动态 API 响应体。
           </div>
         </section>
       </main>
+    </div>
+
+    <div id="authModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="authModalTitle">
+      <div class="modal security-auth-modal">
+        <div class="modal-header">
+          <h2 id="authModalTitle">用户登录</h2>
+          <button id="authCloseBtn" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+        <div class="modal-body auth-body">
+          <div id="authMessage" class="auth-message hidden"></div>
+          <div class="help-tabs">
+            <button id="authLoginTabBtn" type="button" class="active">登录</button>
+            <button id="authRegisterTabBtn" type="button">注册</button>
+            <button id="authTotpTabBtn" type="button">绑定密钥</button>
+            <button id="authPasswordTabBtn" type="button">修改密码</button>
+            <button id="authLogoutTabBtn" type="button">退出</button>
+          </div>
+          <form id="loginForm" class="security-form">
+            <label>账号<input id="loginUsernameInput" autocomplete="username"></label>
+            <label>密码<input id="loginPasswordInput" type="password" autocomplete="current-password"></label>
+            <div id="loginCapsLockWarning" class="caps-lock-warning hidden">大写锁定已开启</div>
+            <label>Authenticator 验证码<input id="loginTotpInput" inputmode="numeric" maxlength="6" placeholder="已绑定时填写"></label>
+            <button id="loginSubmitBtn" type="submit" class="primary">登录</button>
+          </form>
+          <form id="registerForm" class="security-form hidden">
+            <label>账号<input id="registerUsernameInput" autocomplete="username"></label>
+            <label>显示名<input id="registerDisplayNameInput"></label>
+            <label>密码<input id="registerPasswordInput" type="password" autocomplete="new-password"></label>
+            <label>确认密码<input id="registerPasswordConfirmInput" type="password" autocomplete="new-password"></label>
+            <div id="registerCapsLockWarning" class="caps-lock-warning hidden">大写锁定已开启</div>
+            <div class="password-rule">密码至少 12 位，必须包含字母和数字，不能与账号相同。</div>
+            <button id="registerSubmitBtn" type="submit" class="primary">注册</button>
+          </form>
+          <div id="totpPanel" class="security-form hidden">
+            <button id="totpBeginBtn" type="button" class="primary">生成绑定密钥</button>
+            <div id="totpSecretBox" class="secret-box">
+              <div id="totpQrCode" class="totp-qr-code hidden" aria-label="Authenticator 二维码"></div>
+              <div class="secret-row">
+                <span class="secret-label">手动密钥</span>
+                <code id="totpSecretValue">点击生成后显示</code>
+                <button id="totpSecretCopyBtn" type="button" class="hidden">复制</button>
+              </div>
+              <div class="secret-row">
+                <span class="secret-label">绑定地址</span>
+                <code id="totpUrlValue">点击生成后显示</code>
+                <button id="totpUrlCopyBtn" type="button" class="hidden">复制</button>
+              </div>
+            </div>
+            <label>6 位验证码<input id="totpConfirmInput" inputmode="numeric" maxlength="6"></label>
+            <button id="totpConfirmBtn" type="button">确认绑定</button>
+          </div>
+          <form id="passwordForm" class="security-form hidden">
+            <label>原密码<input id="oldPasswordInput" type="password" autocomplete="current-password"></label>
+            <label>新密码<input id="newPasswordInput" type="password" autocomplete="new-password"></label>
+            <label>确认新密码<input id="newPasswordConfirmInput" type="password" autocomplete="new-password"></label>
+            <label>Authenticator 验证码<input id="passwordTotpInput" inputmode="numeric" maxlength="6"></label>
+            <div id="passwordCapsLockWarning" class="caps-lock-warning hidden">大写锁定已开启</div>
+            <div class="password-rule">密码至少 12 位，必须包含字母和数字，不能与账号相同。</div>
+            <button id="passwordSubmitBtn" type="submit" class="primary">保存密码</button>
+          </form>
+        </div>
+      </div>
     </div>
 
     <div id="tagModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="tagModalTitle">

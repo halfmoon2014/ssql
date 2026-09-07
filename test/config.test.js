@@ -12,13 +12,30 @@ const appEnvNames = [
   "MAX_CALL_DEPTH",
   "SCRIPT_WORKER_MAX_OLD_MB",
   "SCRIPT_WORKER_MAX_YOUNG_MB",
+  "SQL_POOL_MYSQL_WAIT_FOR_CONNECTIONS",
+  "SQL_POOL_MYSQL_CONNECTION_LIMIT",
+  "SQL_POOL_MYSQL_QUEUE_LIMIT",
+  "SQL_POOL_MYSQL_CONNECT_TIMEOUT_MS",
+  "SQL_POOL_MSSQL_MAX",
+  "SQL_POOL_MSSQL_MIN",
+  "SQL_POOL_MSSQL_IDLE_TIMEOUT_MS",
+  "SQL_DATASOURCE_CONCURRENCY_ENABLED",
+  "SQL_DATASOURCE_CONCURRENCY_MAX",
+  "SQL_DATASOURCE_QUEUE_LIMIT",
+  "SQL_DATASOURCE_QUEUE_TIMEOUT_MS",
   "FILE_CAPABILITY_TEMP_DIR",
   "FILE_CAPABILITY_MAX_BYTES",
   "FILE_CAPABILITY_TIMEOUT_MS",
   "FILE_CAPABILITY_MAX_REDIRECTS",
   "FILE_CAPABILITY_ALLOWED_PROTOCOLS",
   "FILE_CAPABILITY_ALLOWED_HOSTS",
-  "FILE_CAPABILITY_ALLOW_PRIVATE_NETWORK"
+  "FILE_CAPABILITY_ALLOW_PRIVATE_NETWORK",
+  "SECURITY_ENABLED",
+  "SECURITY_SECRET_KEY",
+  "SECURITY_TOKEN_TTL_SECONDS",
+  "SECURITY_TOTP_ISSUER",
+  "SECURITY_TRUSTED_PROXIES",
+  "SECURITY_ADMIN_IP_WHITELIST_REQUIRED"
 ];
 
 async function withCleanAppEnv(callback) {
@@ -121,6 +138,33 @@ test("normalizeAppConfig reads runtime defaults from config object", async () =>
     },
     runtime: {
       maxCallDepth: 5,
+      sqlExecution: {
+        businessPool: {
+          mysql: {
+            connectionLimit: 12,
+            queueLimit: 3,
+            connectTimeoutMs: 9000
+          },
+          mssql: {
+            max: 8,
+            min: 1,
+            idleTimeoutMillis: 45000
+          }
+        },
+        datasourceConcurrency: {
+          default: {
+            enabled: true,
+            max: 7,
+            queueLimit: 30,
+            queueTimeoutMs: 2500
+          },
+          sources: {
+            erp: {
+              max: 4
+            }
+          }
+        }
+      },
       scriptWorker: {
         maxOldGenerationSizeMb: 64,
         maxYoungGenerationSizeMb: 16
@@ -136,6 +180,14 @@ test("normalizeAppConfig reads runtime defaults from config object", async () =>
         allowedHosts: ["Example.COM"],
         allowPrivateNetwork: false
       }
+    },
+    security: {
+      enabled: true,
+      secretKey: "test-secret",
+      tokenTtlSeconds: 3600,
+      totpIssuer: "Test API",
+      trustedProxies: ["127.0.0.1"],
+      adminIpWhitelistRequired: true
     }
   });
 
@@ -150,9 +202,48 @@ test("normalizeAppConfig reads runtime defaults from config object", async () =>
     maxOldGenerationSizeMb: 64,
     maxYoungGenerationSizeMb: 16
   });
+  assert.deepEqual(config.sqlExecution, {
+    businessPool: {
+      mysql: {
+        waitForConnections: true,
+        connectionLimit: 12,
+        queueLimit: 3,
+        connectTimeoutMs: 9000
+      },
+      mssql: {
+        max: 8,
+        min: 1,
+        idleTimeoutMillis: 45000
+      }
+    },
+    datasourceConcurrency: {
+      default: {
+        enabled: true,
+        max: 7,
+        queueLimit: 30,
+        queueTimeoutMs: 2500
+      },
+      sources: {
+        erp: {
+          enabled: true,
+          max: 4,
+          queueLimit: 30,
+          queueTimeoutMs: 2500
+        }
+      }
+    }
+  });
   assert.equal(config.capabilities.files.tempDir, path.join(rootDir, "data", "downloads"));
   assert.deepEqual(config.capabilities.files.allowedProtocols, ["https:"]);
   assert.deepEqual(config.capabilities.files.allowedHosts, ["example.com"]);
+  assert.deepEqual(config.security, {
+    enabled: true,
+    secretKey: "test-secret",
+    tokenTtlSeconds: 3600,
+    totpIssuer: "Test API",
+    trustedProxies: ["127.0.0.1"],
+    adminIpWhitelistRequired: true
+  });
   });
 });
 
@@ -161,6 +252,9 @@ test("normalizeAppConfig lets environment override config file values", async ()
   process.env.PORT = "3099";
   process.env.SCRIPT_WORKER_MAX_OLD_MB = "96";
   process.env.FILE_CAPABILITY_ALLOWED_PROTOCOLS = "http:,https:";
+  process.env.SECURITY_ENABLED = "true";
+  process.env.SECURITY_TOKEN_TTL_SECONDS = "60";
+  process.env.SECURITY_TRUSTED_PROXIES = "127.0.0.1,10.0.0.10";
   const config = normalizeAppConfig({
     server: { port: 3010, host: "127.0.0.1" },
     paths: { dataDir: "data", publicDir: "public" },
@@ -176,11 +270,15 @@ test("normalizeAppConfig lets environment override config file values", async ()
         allowedHosts: [],
         allowPrivateNetwork: false
       }
-    }
+    },
+    security: { enabled: false, tokenTtlSeconds: 3600, trustedProxies: [] }
   });
 
   assert.equal(config.port, 3099);
   assert.equal(config.scriptWorker.maxOldGenerationSizeMb, 96);
   assert.deepEqual(config.capabilities.files.allowedProtocols, ["http:", "https:"]);
+  assert.equal(config.security.enabled, true);
+  assert.equal(config.security.tokenTtlSeconds, 60);
+  assert.deepEqual(config.security.trustedProxies, ["127.0.0.1", "10.0.0.10"]);
   });
 });

@@ -1104,3 +1104,446 @@
 
 - 用户确认只使用“用户 -> API 权限”模型，并询问 API 调用 IP 白名单限制某些 API 只能从指定服务器调用时配置什么。
 - 设计建议：API 调用 IP 白名单应作为每个 API 的独立配置，保存允许访问该 API 的来源 IP/CIDR 列表；请求执行时在用户授权校验之外，再校验请求来源 IP 是否命中该 API 的白名单。
+
+### 权限设计总结和目录存放建议
+
+- 用户要求总结用户注册、Authenticator、用户到 API 权限、授权页 IP 白名单和 API 调用 IP 白名单方案，并说明项目需要建一个文件夹存放。
+- 设计建议：可新增独立安全模块目录，集中存放用户认证、TOTP、访问令牌、API 授权、IP 白名单和审计相关代码，避免分散在 server/runtime/store 中。
+
+### 管理员权限定义和授权位置
+
+- 用户询问：授权页面访问流程中的管理员权限指什么、在哪里授权。
+- 设计建议：在只使用“用户 -> API 权限”作为 API 执行授权模型时，管理后台权限应单独作为用户管理权限字段或管理权限表维护，用于控制是否能进入授权页面和修改权限配置。
+
+### 安全认证授权设计和操作文档落盘
+
+- 用户要求：写一份详细的设计文档和操作文档存盘。
+- 已新增 `docs/security/AUTH_DESIGN.md`：记录用户注册、Google Authenticator、token、用户到 API 权限、授权页面 IP 白名单、API 调用 IP 白名单、数据表和模块目录设计。
+- 已新增 `docs/security/AUTH_OPERATION.md`：记录初始化、注册、绑定、登录、授权、IP 白名单配置、调用方使用、审计和应急处理流程。
+- 已修改 `readme.md`：在顶部增加两份安全文档入口链接。
+- 验证：已检查两份文档文件存在，`readme.md` 入口链接已写入。
+
+### 安全文档表名前缀调整
+
+- 用户要求：表名使用 `adata_security` 开头。
+- 已修改 `docs/security/AUTH_DESIGN.md` 和 `docs/security/AUTH_OPERATION.md`：安全相关表名统一改为 `adata_security_` 前缀，索引名同步调整。
+- 验证：`rg -n "adata_(users|user_sessions|user_api_permissions|api_ip_whitelist|admin_ip_whitelist|user_recovery_codes)" docs/security/AUTH_DESIGN.md docs/security/AUTH_OPERATION.md` 无旧表名残留。
+
+## 2026-09-05
+
+### 安全认证授权模块开发
+
+- 用户要求：单独新开一个文件夹用于存放这个项目，并根据设计文档开发。
+- 已新增 `src/security/` 独立安全模块目录，包含用户认证、TOTP、token、用户到 API 授权、IP 白名单、安全审计、数据访问和统一中间件。
+- 已新增安全相关自动建表逻辑：`adata_security_users`、`adata_security_user_sessions`、`adata_security_user_api_permissions`、`adata_security_api_ip_whitelist`、`adata_security_admin_ip_whitelist`、`adata_security_audit_logs`。
+- 已新增后端安全接口：注册、登录、登出、当前用户、Authenticator 绑定/确认、用户列表、用户管理权限更新、用户 API 授权、API 调用 IP 白名单、授权入口 IP 白名单和安全审计日志。
+- 已修改 `src/server.js` 和 `src/runtime.js`：`security.enabled=true` 时，动态 API 会校验 Bearer token、用户到 API 权限和 API 调用 IP 白名单；内部 `callApi` 也会按同一用户继续逐个 API 校验。
+- 已修改 `src/scriptRunner.js`：脚本上下文增加 `username`、`displayName`、`authType`。
+- 已修改 `app.config.jsonc` 和 `src/config.js`：增加 `security` 配置段，默认 `enabled=false`，支持环境变量覆盖。
+- 已更新 `docs/security/AUTH_DESIGN.md`、`docs/security/AUTH_OPERATION.md`、`readme.md`、`INSTALL.md`，同步当前实现和配置说明。
+- 已新增 `test/security.test.js`，并更新配置和脚本上下文测试。
+- 验证：
+
+
+- 验证：
+  - `for file in src/*.js src/security/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### 助手能力说明
+
+- 用户询问“你能做什么”。
+- 回复将围绕当前项目说明可提供的代码阅读、功能开发、问题排查、测试验证、文档维护、安全设计和服务运维协助能力。
+
+### 安全认证授权前端页面
+
+- 用户询问“对应的前端页面呢”，随后要求继续。
+- 已修改 `public/index.html`：在主工具栏增加登录、当前用户、安全管理和退出入口；新增登录/注册/Authenticator 绑定弹窗；新增安全管理弹窗，包含用户、API 授权、API IP、授权页 IP 和审计五个页签。
+- 已修改 `public/app.js`：统一请求封装自动携带 Bearer token；接入注册、登录、退出、当前用户、TOTP 绑定；接入用户管理、用户到 API 授权、API 调用 IP 白名单、授权页 IP 白名单和审计日志接口；未登录或 401 时自动打开登录弹窗。
+- 已修改 `public/style.css`：补充认证和安全管理弹窗样式，增加窄屏单列布局，避免用户/API/IP 规则列表在小屏幕挤压。
+- 已微调 `src/security/securityMiddleware.js` 和 `src/server.js`：当前用户、登出和 TOTP 绑定接口要求真实登录会话，避免开发兜底用户误绑定。
+- 验证：
+  - `node -e '...'` DOM ID 校验通过，`public/app.js` 中 118 个 `getElementById` 都能在 `public/index.html` 找到。
+  - `for file in src/*.js src/security/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### 关闭 3010 开发服务
+
+- 用户要求关闭 `3010` 端口。
+- 已向本轮启动的 `npm run dev` 会话发送中断信号，停止 `node src/server.js`。
+- 验证：`ss -ltnp` 中已无 `0.0.0.0:3010` 监听。
+
+### 修复安全用户注册 datetime 写入错误
+
+- 用户提供 `/admin/security/register` 报错日志：MySQL `datetime` 字段不接受 `2026-09-05T20:21:21.907+08:00` 格式。
+- 已修改 `src/security/securityStore.js`：创建安全用户时不再把日志用的带时区时间字符串写入 `created_at`、`updated_at`，改为使用表字段默认 `current_timestamp`。
+- 已修改 `test/security.test.js`：新增测试覆盖安全用户创建 SQL，确认不再手动写入 `created_at`、`updated_at`。
+- 验证：
+  - `node --check src/security/securityStore.js` 通过。
+  - `node --check test/security.test.js` 通过。
+  - `npm test` 通过。
+
+### 管理员绑定 Google Authenticator 操作说明
+
+- 用户询问管理员如何绑定 Google Authenticator。
+- 回复将说明：先注册首个管理员或使用已有管理员登录，再在前端账号/Authenticator 弹窗生成绑定密钥，用 Google Authenticator 扫描/录入密钥后输入 6 位验证码确认绑定。
+
+### Google Authenticator 二维码生成说明
+
+- 用户询问如何生成 Google Authenticator 绑定二维码。
+- 回复将说明：二维码内容就是后端返回的 `otpauth://` URL，应在本地前端或后端生成二维码图片，不能调用第三方二维码 API；推荐使用本地 `qrcode` 类库渲染 canvas/svg。
+
+### 生成 Authenticator 绑定密钥说明
+
+- 用户提出“生成绑定密钥”。
+- 回复将说明：绑定密钥必须通过 `/admin/security/totp/begin` 为当前已登录用户生成并写入数据库，前端可在账号/Authenticator 页签点击“生成绑定密钥”，也可使用 Bearer token 调接口生成。
+
+### Authenticator 手动密钥去除空格
+
+- 用户反馈点击“生成绑定密钥”后页面显示的手动密钥有空格。
+- 已修改 `src/security/totpService.js`：`/admin/security/totp/begin` 返回无空格 `secret`，并让兼容字段 `secretPreview` 也保持无空格。
+- 已修改 `public/app.js`：前端显示手动密钥时去除所有空白，兼容旧返回数据。
+- 已修改 `docs/security/AUTH_DESIGN.md`：同步 TOTP 绑定接口示例。
+- 验证：
+  - `node --check src/security/totpService.js` 通过。
+  - `node --check public/app.js` 通过。
+  - `npm test` 通过。
+
+### 修改密码入口说明
+
+- 用户询问“修改密码在哪”。
+- 检查当前代码后确认：项目暂未实现修改密码接口和前端入口；建议放在右上角“账号”弹窗中，与 Authenticator 绑定同级。
+
+### 再次说明生成 Authenticator 绑定密钥
+
+- 用户再次提出“生成绑定密钥”。
+- 回复将强调：绑定密钥必须通过当前登录用户调用 `/admin/security/totp/begin` 生成并写入数据库，不能只在聊天中离线生成一个密钥；前端入口是右上角“账号” -> `Authenticator` -> “生成绑定密钥”。
+
+### 优化 Authenticator 密钥展示
+
+- 用户反馈点击“生成绑定密钥”后页面展示文字不清晰。
+- 已修改 `public/index.html`：Authenticator 面板中将“手动密钥”和“绑定地址”拆成独立字段，并增加复制按钮。
+- 已修改 `public/app.js`：生成绑定密钥后只更新密钥值和绑定地址值，避免按钮文字和密钥内容混在一起；复制按钮在有内容后显示。
+- 已修改 `public/style.css`：补充密钥展示行样式和移动端布局，长密钥和 `otpauth://` 地址会自动换行。
+- 验证：
+  - DOM ID 校验通过，`public/app.js` 中 122 个 `getElementById` 都能在 `public/index.html` 找到。
+  - `node --check public/app.js` 通过。
+  - `npm test` 通过。
+
+### 账号弹窗按登录状态动态显示
+
+- 用户要求：`currentUserInfo` 增加 `padding-top:7px`；账号弹窗未登录时显示登录/注册，已登录未绑定 Authenticator 时显示退出/绑定密钥，已登录且已绑定时显示修改密码/退出；主界面的退出按钮不要。
+- 已修改 `public/style.css`：为 `#currentUserInfo` 增加 `padding-top: 7px`。
+- 已修改 `public/index.html`：移除主工具栏退出按钮；账号弹窗新增“修改密码”和“退出”操作，并增加修改密码表单。
+- 已修改 `public/app.js`：账号弹窗按登录态和 `totpEnabled` 动态显示登录/注册、绑定密钥/退出、修改密码/退出；退出操作移入账号弹窗；前端接入修改密码提交。
+- 已修改 `src/security/securityStore.js`、`src/security/authService.js`、`src/server.js`：新增当前用户修改密码接口 `/admin/security/password/change`，校验旧密码，并在已绑定 Authenticator 时校验 6 位验证码。
+- 已修改 `test/security.test.js`：新增修改密码测试。
+- 验证：
+  - DOM ID 校验通过，`public/app.js` 中 128 个 `getElementById` 都能在 `public/index.html` 找到。
+  - `for file in src/*.js src/security/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### 注册和修改密码二次确认
+
+- 用户要求：修改密码时输入两次新密码，前端先校验一致；注册时密码也输入两次；页面显示密码规则；保存密码失败提示放在账号弹窗内；安全管理未登录时不要显示。
+- 已修改 `public/index.html`：注册表单增加确认密码；修改密码表单增加确认新密码；账号弹窗增加固定错误提示区域；注册和修改密码表单都显示密码规则。
+- 已修改 `public/app.js`：注册和修改密码先校验密码规则和两次输入一致；修改密码失败显示在账号弹窗内，且不触发 401 自动跳登录；安全管理按钮改为只有已登录且具备 `isAdmin` 或 `canManageAuth` 时显示。
+- 已修改 `public/style.css`：增加账号弹窗内错误/成功提示和密码规则样式。
+- 验证：
+  - DOM ID 校验通过，`public/app.js` 中 131 个 `getElementById` 都能在 `public/index.html` 找到。
+  - `for file in src/*.js src/security/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### 账号弹窗 Caps Lock 提示和关闭规则
+
+- 用户要求：注册和修改密码时，如果按了大写键需要提示用户当前是大写状态；账号设置弹窗只有点击关闭时才关闭。
+- 已修改 `public/index.html`：注册表单和修改密码表单增加“大写锁定已开启”提示区域。
+- 已修改 `public/style.css`：增加 Caps Lock 提示样式。
+- 已修改 `public/app.js`：注册密码、注册确认密码、原密码、新密码、确认新密码输入框监听 Caps Lock 状态；账号弹窗不再支持点击遮罩、按 Esc、登录成功、绑定成功或退出后自动关闭，只能点击右上角关闭按钮关闭。
+- 验证：
+  - DOM ID 校验通过，`public/app.js` 中 133 个 `getElementById` 都能在 `public/index.html` 找到。
+  - `for file in src/*.js src/security/*.js public/app.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### 安全管理拆分为独立页面
+
+- 用户要求：安全管理独立成一个 Web 页面，点击主界面“安全”跳转到新页面。
+- 已新增 `public/security.html`：独立安全管理页面，包含用户、API 授权、API IP、授权页 IP、审计五个管理页签。
+- 已新增 `public/security.js`：独立页面复用 `ssql.security.token` 和现有安全管理接口；未登录或无管理权限时显示阻断提示，不展示管理页签。
+- 已修改 `public/app.js`：主界面“安全”按钮改为跳转 `/security.html`；删除主页面旧安全弹窗状态、DOM 引用、函数和事件绑定。
+- 已修改 `public/index.html`：删除主页面旧安全管理弹窗 DOM。
+- 已修改 `public/style.css`：增加独立安全页面布局样式。
+- 已修改 `docs/security/AUTH_OPERATION.md`：授权页面入口同步为主界面“安全”按钮跳转到 `/security.html`。
+- 验证：
+  - DOM ID 校验通过，`public/app.js` 中 111 个 `getElementById` 都能在 `public/index.html` 找到，`public/security.js` 中 25 个 `getElementById` 都能在 `public/security.html` 找到。
+  - `for file in src/*.js src/security/*.js public/app.js public/security.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### 登录失败提示放入账号弹窗
+
+- 用户要求：登录时的操作失败提示放在窗口上。
+- 已修改 `public/app.js`：登录请求失败时关闭自动 401 跳转处理，错误信息显示在账号弹窗内的 `authMessage` 区域，不再由全局 `runEditorAction` 走右下角 toast。
+- 验证：
+  - 主页面和安全页 DOM ID 校验通过。
+  - `for file in src/*.js src/security/*.js public/app.js public/security.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### 登录成功后关闭账号弹窗
+
+- 用户要求：登录成功后账号设置窗口关闭。
+- 已修改 `public/app.js`：登录成功更新登录状态后调用 `closeAuthModal()`，只恢复登录成功自动关闭行为。
+- 验证：
+  - `node --check public/app.js` 通过。
+  - 主页面和安全页 DOM ID 校验通过。
+
+### 未登录不加载接口数据并自动登录
+
+- 用户要求：`security.html` 中 `securityCurrentUser` 增加 `padding-top:7px`；未登录时 API 接口页面不查询任务数据，自动弹出登录窗口，登录成功后刷新 API 接口页面。
+- 已修改 `public/style.css`：为 `#securityCurrentUser` 增加 `padding-top: 7px`。
+- 已修改 `public/app.js`：抽出 `loadInitialAdminData()`；启动时先校验当前登录用户，没有有效登录态则只打开登录窗口并停止加载数据库源、标签和 API 列表；登录成功后关闭窗口并调用 `loadInitialAdminData({ selectFirst: true })` 刷新 API 接口页面。
+- 验证：
+  - 主页面和安全页 DOM ID 校验通过。
+  - `for file in src/*.js src/security/*.js public/app.js public/security.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### 未登录禁用保存和发布
+
+- 用户要求：没有登录时关闭保存/发布按钮。
+- 已修改 `public/app.js`：新增 `syncAuthProtectedActions()`，未登录时禁用 `保存` 和 `发布/停用` 按钮，并设置提示；登录状态变化和保存中状态变化都会重新同步按钮状态。
+- 验证：
+  - 主页面和安全页 DOM ID 校验通过。
+  - `for file in src/*.js src/security/*.js public/app.js public/security.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### 登录密码 Caps Lock 提示
+
+- 用户要求：用户登录时，如果按了大写键需要提示用户是大写状态。
+- 已修改 `public/index.html`：登录表单密码框下方增加“大写锁定已开启”提示区域。
+- 已修改 `public/app.js`：登录密码输入框接入 Caps Lock 状态检测。
+- 验证：
+  - 主页面和安全页 DOM ID 校验通过。
+  - `for file in src/*.js src/security/*.js public/app.js public/security.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### 补充可信代理影响说明
+
+- 用户要求：在 `docs/security/AUTH_OPERATION.md` 中写清楚配置可信代理时，如果请求不是来自可信代理，具体会影响什么。
+- 已修改 `docs/security/AUTH_OPERATION.md`：补充可信代理定义、白名单判断和审计日志影响；说明未命中可信代理时系统会忽略 `X-Forwarded-For`/`X-Real-IP`，使用 TCP `remoteAddress`，可能导致授权页 IP 白名单、API 调用 IP 白名单匹配失败，审计日志记录代理 IP。
+- 已补充错误配置风险和排查步骤。
+- 验证：已检查文档 3.2 节内容和关键词。
+
+### 补充授权页面 IP 白名单配置说明
+
+- 用户要求：在 `docs/security/AUTH_OPERATION.md` 中写清楚授权页面 IP 白名单在哪里配置，以及不配置会影响什么。
+- 已修改 `docs/security/AUTH_OPERATION.md`：补充配置入口“主界面 -> 安全 -> /security.html -> 授权页 IP”、数据库表 `adata_security_admin_ip_whitelist`、接口 `GET/PUT /admin/security/admin-ip-whitelist`。
+- 已补充不配置时的当前实现行为：无启用规则且 `adminIpWhitelistRequired=false` 时不限制 IP；无启用规则但 `adminIpWhitelistRequired=true` 时所有来源都无法进入授权管理接口；已有启用规则时必须命中规则。
+- 已补充受影响接口、不影响内容、上线建议流程和锁定恢复方式。
+- 验证：已检查文档 3.3 节内容和关键词。
+
+### 修复安全管理静态页面未走 IP 白名单
+
+- 用户询问授权页面 IP 白名单逻辑实现位置，并反馈配置了 `adata_security_admin_ip_whitelist` 后没有限制安全管理页面。
+- 已确认原实现中 `src/security/ipWhitelistService.js` 和 `src/security/securityMiddleware.js` 已限制 `/admin/security/*` 安全管理接口，但 `/security.html` 静态页面由 `serveStatic()` 直接返回，未经过授权页 IP 白名单校验。
+- 已修改 `src/security/securityMiddleware.js`：新增 `requireAdminPageIp(req)`，用于静态安全管理页面入口 IP 校验。
+- 已修改 `src/server.js`：返回 `/security.html` 静态文件前调用 `security.middleware.requireAdminPageIp(req)`。
+- 已修改 `docs/security/AUTH_OPERATION.md`：在授权页面 IP 白名单章节补充具体实现位置。
+- 已修改 `test/security.test.js`：新增测试覆盖开启安全时页面入口会执行授权页 IP 校验，关闭安全时不执行。
+- 验证：
+  - `for file in src/*.js src/security/*.js public/app.js public/security.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### 核对授权页面 IP 白名单规则
+
+- 用户要求再次核对 `docs/security/AUTH_OPERATION.md` 中 `### 3.3 配置授权页面 IP 白名单` 的规则。
+- 已对照 `src/security/ipWhitelistService.js`、`src/security/securityMiddleware.js`、`src/server.js` 和 `app.config.jsonc` 核对。
+- 已修改 `docs/security/AUTH_OPERATION.md`：明确授权页 IP 白名单只在 `security.enabled=true` 时生效；`/security.html` 静态页面只做 IP 入口校验；`/admin/security/*` 接口继续校验登录态、授权页 IP、Authenticator 和管理权限；只有 `enabled=1` 的规则参与匹配。
+- 验证：已检查文档 3.3 节内容和关键词。
+
+### 记录 admin permission is required 原因
+
+- 用户要求：在 `docs/security/AUTH_OPERATION.md` 记录 `admin permission is required` 是什么问题引起的。
+- 已修改 `docs/security/AUTH_OPERATION.md`：新增“常见管理权限错误”小节，说明该错误表示当前用户不是系统管理员，即 `adata_security_users.is_admin != 1`。
+- 已补充典型触发场景：系统已有用户后调用 `POST /admin/security/register` 创建用户，必须使用 `is_admin = 1` 的系统管理员；只有 `can_manage_auth = 1` 的授权管理员不能创建用户。
+- 已补充和 `auth management permission is required` 的区别。
+
+### 说明用户中的管理员和授权字段用法
+
+- 用户询问：用户中的“管理员”和“授权”各是什么用法。
+- 已说明：管理员对应 `is_admin`，用于系统级管理和创建用户；授权对应 `can_manage_auth`，用于维护用户到 API 的授权、API 调用 IP 白名单、授权页 IP 白名单和审计查询。
+
+### 说明授权管理员出现 admin permission is required 的原因
+
+- 用户询问：授权管理员为什么会提示 `admin permission is required`。
+- 已说明：授权管理员只有 `can_manage_auth = 1`，不等于系统管理员；如果当前操作调用的是要求 `is_admin = 1` 的接口，例如已有用户后创建/注册用户，就会返回 `admin permission is required`。
+
+### 修复授权管理员打开主页和安全管理提示 admin permission is required
+
+- 用户反馈：授权管理员打开主页和安全管理都会提示 `admin permission is required`。
+- 已定位原因：主页登录后自动调用普通 `/admin/*` API 编辑接口，这些接口要求 `is_admin = 1`；安全管理页加载 API 目录时也调用了 `/admin/apis`，导致只有 `can_manage_auth = 1` 的授权管理员被系统管理员权限挡住。
+- 已修改 `src/server.js`：新增 `GET /admin/security/apis`，走 `requireAuthManager(req)`，供安全管理页加载 API 目录使用。
+- 已修改 `public/security.js`：安全管理页改用 `/admin/security/apis`；授权管理员打开页面不再因为 API 目录加载触发系统管理员权限校验；用户列表里的用户状态、管理员、授权保存控件对非系统管理员禁用。
+- 已修改 `public/app.js`：主页仅系统管理员加载 API 编辑数据；授权管理员登录后只保留安全管理入口，不再自动请求普通 API 编辑接口。
+
+### 修复授权管理员主页 renderSelectedTags 未定义
+
+- 用户反馈：授权管理员打开主页显示 `renderSelectedTags is not defined`。
+- 已定位原因：授权管理员主页分支调用了不存在的 `renderSelectedTags()`。
+- 已修改 `public/app.js`：改为调用已有的 `renderTagControls()`，统一刷新 API 标签、筛选标签和标签管理显示。
+
+### 说明注册接口返回 authorization bearer token is required
+
+- 用户反馈：访问 `http://127.0.0.1:3010/admin/security/register` 返回 `401 authorization bearer token is required`，询问是否弄错。
+- 已说明：当前实现中只有第一个用户注册不需要 token；数据库已有用户后，`POST /admin/security/register` 被当作管理员创建用户接口，需要系统管理员 Bearer token。未带 token 返回 401，带非系统管理员 token 会返回 `admin permission is required`。
+
+### 说明用户状态 active/disabled/locked
+
+- 用户询问：用户管理里的 `active`、`disabled`、`locked` 是什么意思。
+- 已核对代码：当前只有 `active` 用户可以登录和继续使用 token；`disabled` 和 `locked` 在登录及 token 校验时都会被拒绝，返回 `user is not active`。
+- 已说明建议用法：`disabled` 用于管理员手工停用账号，`locked` 用于风控或异常登录后的临时锁定；当前实现两者行为相同，只是业务含义不同。
+
+### 说明管理员创建新用户流程
+
+- 用户询问：按流程管理员用户怎么创建新用户。
+- 已说明：当前实现中已有用户后，创建新用户使用 `POST /admin/security/register`，必须由 `is_admin = 1` 的系统管理员登录后携带 Bearer token 调用；新用户默认普通用户，后续在安全管理页设置 `active`、`管理员`、`授权` 和 API 权限。
+
+### 说明现有注册入口逻辑
+
+- 用户询问：现有注册入口的逻辑是什么，是否区分第一个用户。
+- 已核对 `src/server.js`、`src/security/authService.js` 和 `public/app.js`：前端注册入口只提交 `POST /admin/security/register`；后端通过 `countUsers()` 区分是否已有用户。
+- 已说明：第一个用户不需要 Bearer token，会自动设置 `is_admin=1` 和 `can_manage_auth=1`；已有用户后注册接口要求系统管理员 Bearer token，否则未带 token 返回 401，非系统管理员返回 `admin permission is required`。
+
+### 修复系统管理员登录后找不到注册入口
+
+- 用户反馈：系统管理员登录后找不到注册入口。
+- 已定位原因：`public/app.js` 中账号弹窗已登录后统一隐藏注册页签，并且 `getDefaultAuthMode()` 会把已登录用户切到绑定密钥或修改密码页签。
+- 已修改 `public/app.js`：系统管理员已登录且已绑定 Authenticator 时显示“新增用户”页签；点击后进入原注册表单并调用 `POST /admin/security/register` 携带管理员 Bearer token 创建用户。
+- 已调整新增成功后的前端行为：管理员新增用户成功后不跳到登录页，清空表单并在窗口内提示用户已创建。
+
+### 说明“当前账号可进入安全管理，不能编辑 API”提示条件
+
+- 用户询问：`当前账号可进入安全管理，不能编辑 API` 什么时候会提示。
+- 已核对 `public/app.js`：主页调用 `loadInitialAdminData()` 时，如果当前用户存在但 `isAdmin` 不为真，就不会加载普通 API 编辑数据，并显示该提示。
+- 已说明：典型是授权管理员 `canManageAuth=1` 且 `isAdmin=0` 登录主页时出现；普通用户如果能登录主页也会触发同一分支，但通常不会显示安全入口。
+
+### 说明用户状态种类
+
+- 用户询问：用户有几种状态。
+- 已说明：当前前端用户管理下拉框提供 3 种状态：`active`、`disabled`、`locked`；数据库默认是 `active`；后端实际只允许 `active` 登录和使用 token。
+
+### 修复普通用户误提示可进入安全管理
+
+- 用户反馈：`当前账号可进入安全管理，不能编辑 API` 应该只有授权管理员提示，普通用户也提示了。
+- 已定位原因：`public/app.js` 的主页初始化只判断了 `!isAdmin`，把普通用户和授权管理员合并成同一提示。
+- 已修改 `public/app.js`：非系统管理员仍不加载 API 编辑接口；`canManageAuth=1` 时提示可进入安全管理，普通用户提示 `当前账号没有后台管理权限`。
+
+### 调整普通用户主页提示文案
+
+- 用户要求：`当前账号没有后台管理权限` 显示为 `普通用户` 即可。
+- 已修改 `public/app.js`：普通用户登录主页后的状态提示改为 `普通用户`，权限判断不变。
+
+### Authenticator 绑定密钥增加二维码扫码
+
+- 用户要求：绑定密钥生成二维码，可以直接扫码。
+- 已安装本地依赖 `qrcode`，避免调用第三方二维码接口泄露 `otpauth://` 密钥内容。
+- 已修改 `src/security/totpService.js`：`beginBind()` 生成绑定密钥时同步生成 `qrCodeSvg` 并返回给前端。
+- 已修改 `public/index.html`、`public/app.js`、`public/style.css`：账号弹窗的“绑定密钥”页签显示二维码，Google Authenticator 可直接扫码；手动密钥和绑定地址仍保留。
+- 已新增 `test/security.test.js` 覆盖 TOTP 绑定响应包含本地二维码 SVG。
+
+### 解释 loadInitialAdminData 非系统管理员分支
+
+- 用户询问：`loadInitialAdminData()` 中 `if (!state.auth.user?.isAdmin)` 分支的作用，并询问普通用户能不能获取 API 列表。
+- 已说明：该分支是主页前端保护，非系统管理员不加载 `/admin/apis`、`/admin/tags`、`/admin/database-sources` 等 API 编辑数据，避免触发系统管理员权限校验。
+- 已说明：普通用户不能获取后台 API 管理列表 `/admin/apis`；普通用户只能携带 token 调用自己已授权的动态 API，不能查看全部 API 列表。
+
+### 说明普通用户获取 token
+
+- 用户询问：普通用户如何获取自己的 token。
+- 已说明：普通用户通过 `POST /admin/security/login` 使用账号、密码和已绑定后的 Google Authenticator 6 位验证码登录，响应中的 `data.accessToken` 就是调用动态 API 时使用的 Bearer token。
+
+### 说明 token 失效机制
+
+- 用户询问：token 失效机制。
+- 已核对 `src/security/tokenService.js`、`src/security/securityStore.js`、`src/security/authService.js` 和配置：登录成功生成 32 字节随机 token，只保存 SHA-256 hash 到 `adata_security_user_sessions`；过期时间由 `security.tokenTtlSeconds`/`SECURITY_TOKEN_TTL_SECONDS` 控制，默认 8 小时。
+- 已说明失效条件：超过 `expires_at`、退出登录写入 `revoked_at`、token 不存在或被篡改、用户状态不是 `active`；当前没有滑动续期，也没有自动清理过期 session 的定时任务。
+
+### 实现改密撤销 session 和管理员踢下线
+
+- 用户要求：修改密码后撤销该用户所有 session，管理员可手工踢下线。
+- 已修改 `src/security/securityStore.js`：新增 `revokeUserSessions(userId)`，撤销指定用户所有未撤销的会话。
+- 已修改 `src/security/authService.js`：修改密码成功后撤销该用户所有有效 session，并在审计详情记录撤销数量。
+- 已修改 `src/server.js`：新增 `POST /admin/security/users/{userId}/sessions/revoke`，仅系统管理员可调用，用于手工踢用户下线并写审计日志。
+- 已修改 `public/security.js`、`public/style.css`：安全管理用户列表增加“踢下线”按钮，非系统管理员禁用，当前登录账号不允许踢自己。
+- 已修改 `public/app.js`：修改密码成功后清空本地 token，切回登录表单，提示用户重新登录。
+- 已更新 `test/security.test.js`：覆盖修改密码成功后撤销 session 和审计详情。
+
+### 讨论多 API 开发者实现方式
+
+- 用户询问：多 API 开发者怎么实现。
+- 已说明：当前项目还没有独立的“API 开发者”权限模型，`is_admin=1` 才能编辑全部 API；如要支持多人开发，建议新增 API 所有者/协作者权限表，实现用户对单个 API 的编辑、测试、发布权限，而不是把所有开发者都设为系统管理员。
+
+### 讨论用户表是否需要 API 开发者标识
+
+- 用户询问：API 开发者对应的用户表是否需要增加字段区分是否是 API 开发者。
+- 已说明：不建议只在用户表增加全局 `is_api_developer` 字段，因为 API 开发权限通常是按 API 分配；可以只通过 `adata_security_api_developers` 权限表判断，也可以加一个用户级总开关作为入口权限，但最终仍要查用户到 API 的开发权限表。
+
+### 实现 can_develop_api 和 adata_security_api_developers
+
+- 用户要求：`can_develop_api` 和 `adata_security_api_developers` 两个都要加。
+- 已修改 `src/security/securityStore.js`：`adata_security_users` 新增 `can_develop_api` 字段和旧表补列迁移；新增 `adata_security_api_developers` 表，保存用户到 API 的 `can_edit`、`can_test`、`can_publish` 开发权限；新增开发权限查询、保存和校验方法。
+- 已修改 `src/security/permissionService.js`、`src/security/securityMiddleware.js`：新增 API 开发者总权限和单 API 动作权限校验。
+- 已修改 `src/server.js`、`src/store.js`：普通 `/admin/apis` 改为系统管理员或 API 开发者可访问；开发者列表只返回自己有开发权限的 API；保存、测试、发布分别校验 `can_edit`、`can_test`、`can_publish`；开发者新建 API 后自动获得该 API 的完整开发权限。
+- 已修改 `public/app.js`：`canDevelopApi=1` 的用户可以加载 API 编辑主页；普通用户仍只显示 `普通用户`，授权管理员仍提示只能进入安全管理。
+- 已修改 `public/security.html`、`public/security.js`、`public/style.css`：安全管理增加“开发”用户开关和“API 开发”页签，用于系统管理员配置用户到 API 的编辑、测试、发布权限。
+- 已修改 `docs/security/AUTH_OPERATION.md`：补充 API 开发者角色和开发权限判断规则。
+- 已更新 `test/security.test.js`：补充 API 开发权限动作校验测试。
+
+### 形成前端接口权限文档并复核脚本绕过
+
+- 用户要求：列出所有前端执行的接口及对应权限，查看是否存在直接执行脚本绕开控制的问题，形成单独文档；后续调整权限需要更新该文档。
+- 已新增 `docs/security/FRONTEND_API_PERMISSIONS.md`：列出主页 `public/app.js`、安全管理页 `public/security.js` 当前实际调用的接口、后端权限校验函数、允许身份和补充限制。
+- 已在文档中写明维护要求：前端新增/删除/调整接口调用，或后端调整接口权限时，必须同步更新该文档。
+- 已复核脚本执行链路：前端没有直接提交任意 JS 到后端执行的接口；脚本执行入口为 API 测试接口和动态 API 执行。
+- 已发现并修复管理端测试脚本内 `callApi` 的跨 API 权限绕过风险：`allowDraft=true` 测试场景下，脚本调用目标 API 时现在必须继续校验目标 API 的 `can_test`。
+- 已修改 `src/runtime.js`：新增 `executeCallApiWithMethod()`，解析脚本内 `callApi` 目标 API 后执行 `authorizeCallApi` 回调，并将该回调传递到嵌套调用。
+- 已修改 `src/server.js`：管理端 `test-sql`、`test-script`、`test-api` 使用当前登录用户作为脚本上下文，并通过 `createTestCallAuthorizer()` 对脚本内 `callApi` 目标 API 校验 `can_test`。
+- 已更新 `test/runtime.test.js`：覆盖 `executeCallApi` 会先授权目标 API 再执行。
+
+### 说明 SQL 执行技术和高并发连接风险
+
+- 用户询问：SQL 是用什么技术执行的，高并发情况下会不会把数据库连接打到无响应。
+- 已核对 `src/sqlExecutor.js`、`src/store.js`、`app.config.jsonc` 和 `database.config.json`。
+- 已说明：元数据表使用 `mysql2/promise` 连接池，`connectionLimit=10`；业务 API SQL 按数据源类型执行，MySQL 使用 `mysql2/promise`，SQL Server 使用 `mssql`。
+- 已说明当前业务 SQL 执行是每次请求创建业务数据库连接或 mssql 连接池，用完关闭，不是长期复用业务库连接池；高并发会大量新建连接，可能耗尽数据库最大连接数、认证资源、网络端口或让连接排队，导致响应变慢或失败。
+- 已说明现有保护：SQL 超时、脚本超时、调用深度、SQL 安全关键字限制；但当前缺少全局并发限制、每数据源业务连接池上限、队列上限、熔断和慢查询隔离。
+
+### 说明并发限流设计
+
+- 用户询问：并发限流怎么做。
+- 已说明建议按三层做：全局 API 并发、按数据源并发、按单个 API 并发；超过并发上限时进入有限队列，队列满或等待超时返回 429/503。
+- 已说明代码落点：在 `src/runtime.js` 的 `executeApi()` 包住动态 API 总执行，在 `src/sqlExecutor.js` 执行 SQL 前按 `databaseAlias` 限制数据库并发；API 级限流按 `api.id` 维度。
+
+### 实现业务连接池和按数据源并发限制
+
+- 用户要求：先处理业务连接池和按数据源并发限制。
+- 已新增 `src/concurrencyLimiter.js`：实现轻量并发限制器，支持 `max`、`queueLimit`、`queueTimeoutMs`，队列满返回 429，等待超时返回 503，请求中断返回 499。
+- 已修改 `src/config.js` 和 `app.config.jsonc`：新增 `runtime.sqlExecution.businessPool` 和 `runtime.sqlExecution.datasourceConcurrency` 配置；支持按数据源 alias 覆盖并发参数。
+- 已修改 `src/sqlExecutor.js`：业务 MySQL 改为按数据源复用 `mysql2/promise` pool，业务 MSSQL 改为按数据源复用 `mssql.ConnectionPool`；`executeSqlWithFields()` 在执行 SQL 前按数据源拿并发令牌，并在 `finally` 中释放。
+- 已修改 `src/server.js`：服务收到 `SIGINT`/`SIGTERM` 时关闭元数据库连接池和业务数据库连接池。
+- 已新增 `docs/CONCURRENCY_LIMITS.md`：记录配置位置、错误返回、实现位置和调参建议。
+- 已新增 `test/concurrencyLimiter.test.js`，并扩展 `test/config.test.js`、`test/sqlExecutor.test.js`，覆盖配置归一化、业务池复用和数据源并发限制。
+
+### 前端按钮跟随单 API 开发权限
+
+- 用户要求：API 开发已经按每个 API 设置编辑、测试和发布权限，前端页面按钮也要跟着设置。
+- 已修改 `src/server.js`：`/admin/apis` 列表、详情、新建、保存、发布和停用响应附带当前用户对该 API 的 `developerPermission.canEdit/canTest/canPublish`。
+- 已修改 `public/app.js`：新建、保存、测试 SQL、测试 JS、发布/停用按钮按当前用户和当前 API 权限禁用；快捷键 `Ctrl/Cmd+S`、`Ctrl/Cmd+Enter` 同样走权限判断，避免绕过按钮。
+- 已调整测试行为：只有测试权限但没有编辑权限时，测试按钮可用，但不会先保存页面草稿，后端使用数据库中已保存的 API 配置测试；只有发布权限但没有编辑权限时，发布/停用也不会先保存草稿。
+- 已更新 `docs/security/FRONTEND_API_PERMISSIONS.md`：补充主页按钮控制规则和后端返回的开发权限字段。
+- 验证：
+  - `for file in src/*.js src/security/*.js public/app.js public/security.js test/*.js; do node --check "$file" || exit 1; done` 通过。
+  - `npm test` 通过。
+
+### 新建 API 默认开发权限去掉发布
+
+- 用户要求：API 开发者新建接口后默认可编辑、可测试，但去掉可发布。
+- 已修改 `src/server.js`：非系统管理员创建 API 后自动授予 `canEdit=true`、`canTest=true`、`canPublish=false`。
+- 已更新 `docs/security/FRONTEND_API_PERMISSIONS.md`：同步 `POST /admin/apis` 权限说明。

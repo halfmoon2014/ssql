@@ -7,6 +7,11 @@ const state = {
   apiSavedTagIds: [],
   searchTagIds: [],
   tagSelectMode: "api",
+  auth: {
+    token: "",
+    user: null,
+    authMode: "login"
+  },
   testControllers: {
     sql: null,
     script: null
@@ -69,6 +74,9 @@ const els = {
   nextPageBtn: document.getElementById("nextPageBtn"),
   pageInfo: document.getElementById("pageInfo"),
   saveBtn: document.getElementById("saveBtn"),
+  authOpenBtn: document.getElementById("authOpenBtn"),
+  securityOpenBtn: document.getElementById("securityOpenBtn"),
+  currentUserInfo: document.getElementById("currentUserInfo"),
   statusToggleBtn: document.getElementById("statusToggleBtn"),
   pageTitle: document.getElementById("pageTitle"),
   statusText: document.getElementById("statusText"),
@@ -124,10 +132,49 @@ const els = {
   scriptHelpBtn: document.getElementById("scriptHelpBtn"),
   scriptHelpBox: document.getElementById("scriptHelpBox"),
   scriptHelpCloseBtn: document.getElementById("scriptHelpCloseBtn"),
-  scriptInput: document.getElementById("scriptInput")
+  scriptInput: document.getElementById("scriptInput"),
+  authModal: document.getElementById("authModal"),
+  authMessage: document.getElementById("authMessage"),
+  authCloseBtn: document.getElementById("authCloseBtn"),
+  authLoginTabBtn: document.getElementById("authLoginTabBtn"),
+  authRegisterTabBtn: document.getElementById("authRegisterTabBtn"),
+  authTotpTabBtn: document.getElementById("authTotpTabBtn"),
+  authPasswordTabBtn: document.getElementById("authPasswordTabBtn"),
+  authLogoutTabBtn: document.getElementById("authLogoutTabBtn"),
+  loginForm: document.getElementById("loginForm"),
+  loginUsernameInput: document.getElementById("loginUsernameInput"),
+  loginPasswordInput: document.getElementById("loginPasswordInput"),
+  loginCapsLockWarning: document.getElementById("loginCapsLockWarning"),
+  loginTotpInput: document.getElementById("loginTotpInput"),
+  loginSubmitBtn: document.getElementById("loginSubmitBtn"),
+  registerForm: document.getElementById("registerForm"),
+  registerUsernameInput: document.getElementById("registerUsernameInput"),
+  registerDisplayNameInput: document.getElementById("registerDisplayNameInput"),
+  registerPasswordInput: document.getElementById("registerPasswordInput"),
+  registerPasswordConfirmInput: document.getElementById("registerPasswordConfirmInput"),
+  registerCapsLockWarning: document.getElementById("registerCapsLockWarning"),
+  registerSubmitBtn: document.getElementById("registerSubmitBtn"),
+  totpPanel: document.getElementById("totpPanel"),
+  totpBeginBtn: document.getElementById("totpBeginBtn"),
+  totpSecretBox: document.getElementById("totpSecretBox"),
+  totpQrCode: document.getElementById("totpQrCode"),
+  totpSecretValue: document.getElementById("totpSecretValue"),
+  totpSecretCopyBtn: document.getElementById("totpSecretCopyBtn"),
+  totpUrlValue: document.getElementById("totpUrlValue"),
+  totpUrlCopyBtn: document.getElementById("totpUrlCopyBtn"),
+  totpConfirmInput: document.getElementById("totpConfirmInput"),
+  totpConfirmBtn: document.getElementById("totpConfirmBtn"),
+  passwordForm: document.getElementById("passwordForm"),
+  oldPasswordInput: document.getElementById("oldPasswordInput"),
+  newPasswordInput: document.getElementById("newPasswordInput"),
+  newPasswordConfirmInput: document.getElementById("newPasswordConfirmInput"),
+  passwordTotpInput: document.getElementById("passwordTotpInput"),
+  passwordCapsLockWarning: document.getElementById("passwordCapsLockWarning"),
+  passwordSubmitBtn: document.getElementById("passwordSubmitBtn")
 };
 
 const defaultParamScript = "";
+const authTokenKey = "ssql.security.token";
 
 const defaultResultScript = `async function main({ params, resultSets, callApi, files }) {
   return resultSets;
@@ -243,7 +290,7 @@ const capabilityReturnSchemas = {
   }
 };
 
-const contextHintFields = ["requestId", "userId", "roles", "callDepth", "callChain", "scriptType"];
+const contextHintFields = ["requestId", "userId", "username", "displayName", "authType", "roles", "callDepth", "callChain", "scriptType"];
 const resultSetHintFields = ["fields", "rows"];
 const arrayHintFields = ["length", "at", "concat", "entries", "every", "filter", "find", "findIndex", "forEach", "includes", "indexOf", "join", "map", "slice", "some"];
 const commonHeaderNames = ["accept", "accept-language", "content-type", "host", "origin", "referer", "user-agent", "x-forwarded-for", "x-request-id"];
@@ -297,12 +344,95 @@ function showToast(message, type = "success") {
   }, 2600);
 }
 
+async function copyText(text) {
+  const value = String(text || "").trim();
+  if (!value || value === "点击生成后显示") {
+    showToast("请先生成绑定密钥", "error");
+    return;
+  }
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(value);
+  } else {
+    const input = document.createElement("textarea");
+    input.value = value;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand("copy");
+    input.remove();
+  }
+  showToast("已复制");
+}
+
+function getLocalPageUrl(path) {
+  const pagePath = path.startsWith("/") ? path : `/${path}`;
+  return `${appBasePath}${pagePath}`;
+}
+
+function getCurrentDeveloperPermission(api = state.current) {
+  const user = state.auth.user;
+  if (!user) return { canEdit: false, canTest: false, canPublish: false };
+  if (user.isAdmin) return { canEdit: true, canTest: true, canPublish: true };
+  if (!user.canDevelopApi) return { canEdit: false, canTest: false, canPublish: false };
+  if (!api || !api.id) return { canEdit: true, canTest: true, canPublish: true };
+  const permission = api.developerPermission || {};
+  return {
+    canEdit: Boolean(permission.canEdit),
+    canTest: Boolean(permission.canTest),
+    canPublish: Boolean(permission.canPublish)
+  };
+}
+
+function canCreateApi() {
+  const user = state.auth.user;
+  return Boolean(user?.isAdmin || user?.canDevelopApi);
+}
+
+function permissionDeniedMessage(action) {
+  if (!state.auth.user) return "请先登录后继续操作";
+  if (!state.auth.user.isAdmin && !state.auth.user.canDevelopApi) return "当前账号没有 API 开发权限";
+  const actionText = {
+    edit: "编辑",
+    test: "测试",
+    publish: "发布或停用"
+  }[action] || "操作";
+  return `当前账号没有此 API 的${actionText}权限`;
+}
+
+function assertCurrentApiPermission(action) {
+  const permission = getCurrentDeveloperPermission();
+  const allowed = action === "edit"
+    ? permission.canEdit
+    : action === "test"
+      ? permission.canTest
+      : permission.canPublish;
+  if (!allowed) throw new Error(permissionDeniedMessage(action));
+}
+
+function syncAuthProtectedActions() {
+  const permission = getCurrentDeveloperPermission();
+  const isSqlTesting = Boolean(state.testControllers.sql);
+  const isScriptTesting = Boolean(state.testControllers.script);
+  els.newApiBtn.disabled = !canCreateApi();
+  els.newApiBtn.title = canCreateApi() ? "" : permissionDeniedMessage("edit");
+  els.saveBtn.disabled = state.saving || !permission.canEdit;
+  els.statusToggleBtn.disabled = !permission.canPublish;
+  els.runSqlBtn.disabled = isSqlTesting || !permission.canTest;
+  els.runScriptBtn.disabled = isScriptTesting || !permission.canTest;
+  els.saveBtn.title = permission.canEdit ? "" : permissionDeniedMessage("edit");
+  els.statusToggleBtn.title = permission.canPublish ? "" : permissionDeniedMessage("publish");
+  els.runSqlBtn.title = permission.canTest ? "Ctrl/Cmd+Enter" : permissionDeniedMessage("test");
+  els.runScriptBtn.title = permission.canTest ? "Ctrl/Cmd+Enter" : permissionDeniedMessage("test");
+}
+
 function setSaveLoading(loading) {
   // 保存请求未完成前禁用按钮，避免重复提交同一份 API 定义。
   state.saving = Boolean(loading);
-  els.saveBtn.disabled = state.saving;
   els.saveBtn.classList.toggle("loading", state.saving);
   els.saveBtn.textContent = state.saving ? "保存中..." : "保存";
+  syncAuthProtectedActions();
 }
 
 function setButtonLoading(button, loading, text) {
@@ -326,6 +456,7 @@ function setTestRunning(type, running) {
     abortButton.disabled = !running;
     abortButton.classList.toggle("hidden", !running);
   }
+  syncAuthProtectedActions();
 }
 
 function beginTestRun(type) {
@@ -1278,19 +1409,347 @@ function localObjectPropertyHint(editor, cursor, line) {
 
 async function request(path, options = {}) {
   // 管理端接口统一使用 { code, message, data }，这里拆出 data 并抛出错误信息。
+  const { authRedirect = true, headers = {}, ...fetchOptions } = options;
   const requestPath = path.startsWith("/") ? `${appBasePath}${path}` : path;
+  const token = state.auth.token || loadAuthToken();
   const response = await fetch(requestPath || path, {
+    ...fetchOptions,
     headers: {
       "content-type": "application/json",
-      ...(options.headers || {})
-    },
-    ...options
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...headers
+    }
   });
   const data = await response.json();
   if (!response.ok || data.code !== 0) {
-    throw new Error(data.message || `request failed: ${response.status}`);
+    const error = new Error(data.message || `request failed: ${response.status}`);
+    error.statusCode = response.status;
+    error.data = data.data;
+    if (response.status === 401 && authRedirect) {
+      saveAuthToken("");
+      state.auth.user = null;
+      renderAuthState();
+      openAuthModal("login");
+    }
+    throw error;
   }
   return data.data;
+}
+
+function loadAuthToken() {
+  try {
+    return localStorage.getItem(authTokenKey) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function saveAuthToken(token) {
+  state.auth.token = String(token || "");
+  try {
+    if (state.auth.token) localStorage.setItem(authTokenKey, state.auth.token);
+    else localStorage.removeItem(authTokenKey);
+  } catch (error) {
+    showStatus(`登录状态保存失败: ${error.message}`);
+  }
+}
+
+function renderAuthState() {
+  const user = state.auth.user;
+  const canOpenSecurity = user && (user.isAdmin || user.canManageAuth);
+  els.currentUserInfo.textContent = user ? `${user.username}${user.totpEnabled ? "" : " · 未绑定"}` : "未登录";
+  els.authOpenBtn.textContent = user ? "账号" : "登录";
+  els.securityOpenBtn.classList.toggle("hidden", !canOpenSecurity);
+  syncAuthProtectedActions();
+}
+
+function setAuthMessage(message = "", type = "error") {
+  els.authMessage.textContent = message;
+  els.authMessage.classList.toggle("hidden", !message);
+  els.authMessage.classList.toggle("success", type === "success");
+}
+
+function validatePasswordInput(username, password) {
+  const value = String(password || "");
+  if (value.length < 12) return "密码至少需要 12 位";
+  if (!/[a-zA-Z]/.test(value) || !/[0-9]/.test(value)) return "密码必须同时包含字母和数字";
+  if (value.toLowerCase() === String(username || "").toLowerCase()) return "密码不能与账号相同";
+  return "";
+}
+
+function bindCapsLockWarning(inputs, warning) {
+  const update = (event) => {
+    if (!event || typeof event.getModifierState !== "function") return;
+    warning.classList.toggle("hidden", !event.getModifierState("CapsLock"));
+  };
+  const hide = () => warning.classList.add("hidden");
+  for (const input of inputs) {
+    input.addEventListener("keydown", update);
+    input.addEventListener("keyup", update);
+    input.addEventListener("focus", update);
+    input.addEventListener("blur", hide);
+  }
+}
+
+function getDefaultAuthMode(mode) {
+  const user = state.auth.user;
+  if (!user) return mode === "register" ? "register" : "login";
+  if (mode === "register" && user.isAdmin && user.totpEnabled) return "register";
+  if (!user.totpEnabled) return "totp";
+  return "password";
+}
+
+function renderAuthTabs(mode) {
+  const user = state.auth.user;
+  const loggedIn = Boolean(user);
+  const needsTotpBind = loggedIn && !user.totpEnabled;
+  const canChangePassword = loggedIn && user.totpEnabled;
+  const canCreateUser = loggedIn && user.isAdmin && user.totpEnabled;
+  els.authLoginTabBtn.classList.toggle("hidden", loggedIn);
+  els.authRegisterTabBtn.classList.toggle("hidden", loggedIn && !canCreateUser);
+  els.authRegisterTabBtn.textContent = canCreateUser ? "新增用户" : "注册";
+  els.authTotpTabBtn.classList.toggle("hidden", !needsTotpBind);
+  els.authPasswordTabBtn.classList.toggle("hidden", !canChangePassword);
+  els.authLogoutTabBtn.classList.toggle("hidden", !loggedIn);
+  els.authLoginTabBtn.classList.toggle("active", mode === "login");
+  els.authRegisterTabBtn.classList.toggle("active", mode === "register");
+  els.authTotpTabBtn.classList.toggle("active", mode === "totp");
+  els.authPasswordTabBtn.classList.toggle("active", mode === "password");
+}
+
+function setAuthMode(mode) {
+  const targetMode = getDefaultAuthMode(mode);
+  state.auth.authMode = targetMode;
+  setAuthMessage("");
+  const isLogin = targetMode === "login";
+  const isRegister = targetMode === "register";
+  const isTotp = targetMode === "totp";
+  const isPassword = targetMode === "password";
+  els.loginForm.classList.toggle("hidden", !isLogin);
+  els.registerForm.classList.toggle("hidden", !isRegister);
+  els.totpPanel.classList.toggle("hidden", !isTotp);
+  els.passwordForm.classList.toggle("hidden", !isPassword);
+  renderAuthTabs(targetMode);
+  els.registerSubmitBtn.textContent = state.auth.user?.isAdmin ? "新增用户" : "注册";
+  document.getElementById("authModalTitle").textContent = state.auth.user
+    ? isRegister ? "新增用户" : "账号设置"
+    : isRegister ? "用户注册" : "用户登录";
+}
+
+function openAuthModal(mode = "") {
+  const targetMode = getDefaultAuthMode(mode);
+  setAuthMode(targetMode);
+  els.authModal.classList.remove("hidden");
+  if (targetMode === "login") els.loginUsernameInput.focus();
+  if (targetMode === "register") els.registerUsernameInput.focus();
+  if (targetMode === "totp") els.totpConfirmInput.focus();
+  if (targetMode === "password") els.oldPasswordInput.focus();
+}
+
+function closeAuthModal() {
+  els.authModal.classList.add("hidden");
+}
+
+async function loadInitialAdminData(options = {}) {
+  if (!state.auth.user?.isAdmin && !state.auth.user?.canDevelopApi) {
+    // 没有 API 开发权限的账号不加载 API 编辑接口，避免触发开发权限校验。
+    state.apis = [];
+    state.current = null;
+    state.tags = [];
+    state.apiTagIds = [];
+    state.apiSavedTagIds = [];
+    state.searchTagIds = [];
+    state.databaseSources = [];
+    renderList();
+    renderTagControls();
+    renderDatabaseOptions(state.defaultDatabaseAlias);
+    syncAuthProtectedActions();
+    if (!state.auth.user) {
+      showStatus("请先登录后继续操作");
+    } else if (state.auth.user.canManageAuth) {
+      showStatus("当前账号可进入安全管理，不能编辑 API");
+    } else {
+      showStatus("普通用户");
+    }
+    return;
+  }
+  await Promise.all([loadDatabaseSources(), loadTags()]);
+  await loadApis(options);
+}
+
+async function refreshCurrentUser(options = {}) {
+  state.auth.token = loadAuthToken();
+  if (!state.auth.token) {
+    state.auth.user = null;
+    renderAuthState();
+    return null;
+  }
+  try {
+    state.auth.user = await request("/admin/security/me");
+    renderAuthState();
+    return state.auth.user;
+  } catch (error) {
+    if (options.clearOnFailure !== false) saveAuthToken("");
+    state.auth.user = null;
+    renderAuthState();
+    return null;
+  }
+}
+
+async function submitLogin(event) {
+  event.preventDefault();
+  setAuthMessage("");
+  setButtonLoading(els.loginSubmitBtn, true, "登录中...");
+  try {
+    const data = await request("/admin/security/login", {
+      method: "POST",
+      authRedirect: false,
+      body: JSON.stringify({
+        username: els.loginUsernameInput.value.trim(),
+        password: els.loginPasswordInput.value,
+        totpCode: els.loginTotpInput.value.trim()
+      })
+    });
+    saveAuthToken(data.accessToken);
+    state.auth.user = data.user;
+    renderAuthState();
+    setAuthMode();
+    closeAuthModal();
+    showToast("登录成功");
+    showStatus(`已登录 · ${data.user.username}`);
+    await loadInitialAdminData({ selectFirst: true });
+  } catch (error) {
+    setAuthMessage(`登录失败: ${error.message}`);
+  } finally {
+    setButtonLoading(els.loginSubmitBtn, false);
+  }
+}
+
+async function submitRegister(event) {
+  event.preventDefault();
+  const creatingUserAsAdmin = Boolean(state.auth.user?.isAdmin);
+  const username = els.registerUsernameInput.value.trim();
+  const passwordError = validatePasswordInput(username, els.registerPasswordInput.value);
+  if (passwordError) {
+    setAuthMessage(passwordError);
+    return;
+  }
+  if (els.registerPasswordInput.value !== els.registerPasswordConfirmInput.value) {
+    setAuthMessage("两次输入的密码不一致");
+    return;
+  }
+  setButtonLoading(els.registerSubmitBtn, true, "注册中...");
+  try {
+    await request("/admin/security/register", {
+      method: "POST",
+      body: JSON.stringify({
+        username,
+        displayName: els.registerDisplayNameInput.value.trim(),
+        password: els.registerPasswordInput.value
+      })
+    });
+    els.registerPasswordInput.value = "";
+    els.registerPasswordConfirmInput.value = "";
+    if (creatingUserAsAdmin) {
+      els.registerUsernameInput.value = "";
+      els.registerDisplayNameInput.value = "";
+      setAuthMessage("用户已创建，请通知用户登录后绑定 Authenticator", "success");
+      showToast("用户已创建");
+    } else {
+      els.loginUsernameInput.value = username;
+      setAuthMode("login");
+      showToast("注册完成，请登录后绑定 Authenticator");
+    }
+  } catch (error) {
+    setAuthMessage(`${creatingUserAsAdmin ? "新增用户" : "注册"}失败: ${error.message}`);
+  } finally {
+    setButtonLoading(els.registerSubmitBtn, false);
+  }
+}
+
+async function beginTotpBind() {
+  setButtonLoading(els.totpBeginBtn, true, "生成中...");
+  try {
+    const data = await request("/admin/security/totp/begin", { method: "POST", body: "{}" });
+    const secret = String(data.secret || data.secretPreview || "").replace(/\s+/g, "");
+    els.totpQrCode.innerHTML = data.qrCodeSvg || "";
+    els.totpQrCode.classList.toggle("hidden", !data.qrCodeSvg);
+    els.totpSecretValue.textContent = secret || "生成失败";
+    els.totpUrlValue.textContent = data.otpauthUrl || "生成失败";
+    els.totpSecretCopyBtn.classList.toggle("hidden", !secret);
+    els.totpUrlCopyBtn.classList.toggle("hidden", !data.otpauthUrl);
+    showToast("绑定密钥已生成");
+  } finally {
+    setButtonLoading(els.totpBeginBtn, false);
+  }
+}
+
+async function confirmTotpBind() {
+  setButtonLoading(els.totpConfirmBtn, true, "确认中...");
+  try {
+    await request("/admin/security/totp/confirm", {
+      method: "POST",
+      body: JSON.stringify({ code: els.totpConfirmInput.value.trim() })
+    });
+    await refreshCurrentUser();
+    setAuthMode();
+    setAuthMessage("Authenticator 已绑定", "success");
+  } finally {
+    setButtonLoading(els.totpConfirmBtn, false);
+  }
+}
+
+async function submitPasswordChange(event) {
+  event.preventDefault();
+  const username = state.auth.user?.username || "";
+  const passwordError = validatePasswordInput(username, els.newPasswordInput.value);
+  if (passwordError) {
+    setAuthMessage(passwordError);
+    return;
+  }
+  if (els.newPasswordInput.value !== els.newPasswordConfirmInput.value) {
+    setAuthMessage("两次输入的新密码不一致");
+    return;
+  }
+  setButtonLoading(els.passwordSubmitBtn, true, "保存中...");
+  try {
+    await request("/admin/security/password/change", {
+      method: "POST",
+      authRedirect: false,
+      body: JSON.stringify({
+        oldPassword: els.oldPasswordInput.value,
+        newPassword: els.newPasswordInput.value,
+        totpCode: els.passwordTotpInput.value.trim()
+      })
+    });
+    els.oldPasswordInput.value = "";
+    els.newPasswordInput.value = "";
+    els.newPasswordConfirmInput.value = "";
+    els.passwordTotpInput.value = "";
+    const username = state.auth.user?.username || "";
+    saveAuthToken("");
+    state.auth.user = null;
+    renderAuthState();
+    setAuthMode("login");
+    els.loginUsernameInput.value = username;
+    setAuthMessage("密码已修改，请重新登录", "success");
+  } catch (error) {
+    setAuthMessage(`保存密码失败: ${error.message}`);
+  } finally {
+    setButtonLoading(els.passwordSubmitBtn, false);
+  }
+}
+
+async function logout() {
+  try {
+    if (state.auth.token) await request("/admin/security/logout", { method: "POST", body: "{}" });
+  } finally {
+    saveAuthToken("");
+    state.auth.user = null;
+    renderAuthState();
+    setAuthMode("login");
+    showToast("已退出");
+  }
 }
 
 function runEditorAction(action) {
@@ -1781,6 +2240,7 @@ function fillForm(api, options = {}) {
   syncAutoHeightEditor(state.editors.sql);
   syncAutoHeightEditor(state.editors.script);
   applyCachedSqlResult(api);
+  syncAuthProtectedActions();
 }
 
 function renderStatusToggle(api) {
@@ -1845,6 +2305,7 @@ function renderList() {
   els.pageInfo.textContent = `${state.list.page} / ${state.list.totalPages} · 共 ${state.list.total}`;
   els.prevPageBtn.disabled = state.list.page <= 1;
   els.nextPageBtn.disabled = state.list.page >= state.list.totalPages;
+  syncAuthProtectedActions();
 }
 
 function buildApiListPath() {
@@ -1895,6 +2356,7 @@ async function loadDatabaseSources() {
 
 async function saveApi(options = {}) {
   // 已有 id 时更新，否则创建新 API；保存后刷新列表以同步排序和分页信息。
+  assertCurrentApiPermission("edit");
   const notify = options.notify !== false;
   setSaveLoading(true);
   showStatus("保存中...");
@@ -1924,6 +2386,7 @@ async function saveApi(options = {}) {
 
 async function runSql() {
   // 测试 SQL 前先保存当前 API，确保后端测试使用的是最新配置。
+  assertCurrentApiPermission("test");
   const controller = beginTestRun("sql");
   if (!controller) return;
   let params = {};
@@ -1936,12 +2399,14 @@ async function runSql() {
   }
 
   try {
-    const api = await saveApi({ notify: false });
+    const canPersistBeforeTest = !state.current?.id || getCurrentDeveloperPermission().canEdit;
+    const api = canPersistBeforeTest ? await saveApi({ notify: false }) : state.current;
     if (controller.signal.aborted) {
       showLog("SQL 测试已中断");
       showStatus("SQL 测试已中断");
       return;
     }
+    if (!canPersistBeforeTest) showStatus("当前账号没有编辑权限，SQL 测试使用已保存配置");
     showLog("SQL 测试中...");
     const data = await request(`/admin/apis/${api.id}/test-sql`, {
       method: "POST",
@@ -1983,6 +2448,7 @@ async function runSql() {
 
 async function runScriptTest() {
   // JS 测试复用真实链路：先执行参数处理，再准备 SQL 结果，最后执行结果集处理脚本。
+  assertCurrentApiPermission("test");
   const controller = beginTestRun("script");
   if (!controller) return;
   let params = {};
@@ -1995,12 +2461,14 @@ async function runScriptTest() {
   }
 
   try {
-    const api = await saveApi({ notify: false });
+    const canPersistBeforeTest = !state.current?.id || getCurrentDeveloperPermission().canEdit;
+    const api = canPersistBeforeTest ? await saveApi({ notify: false }) : state.current;
     if (controller.signal.aborted) {
       showLog("JS 测试已中断");
       showStatus("JS 测试已中断");
       return;
     }
+    if (!canPersistBeforeTest) showStatus("当前账号没有编辑权限，JS 测试使用已保存配置");
     showLog("JS 测试中...");
     const data = await request(`/admin/apis/${api.id}/test-script`, {
       method: "POST",
@@ -2039,7 +2507,10 @@ async function runScriptTest() {
 
 async function publishApi() {
   // 发布会先保存草稿，再切换状态，避免遗漏编辑器中的未保存修改。
-  const api = await saveApi({ notify: false });
+  assertCurrentApiPermission("publish");
+  const canPersistBeforePublish = getCurrentDeveloperPermission().canEdit;
+  const api = canPersistBeforePublish ? await saveApi({ notify: false }) : state.current;
+  if (!api?.id) throw new Error("请先保存 API 后再发布");
   const published = await request(`/admin/apis/${api.id}/publish`, { method: "POST", body: "{}" });
   fillForm(published);
   await loadApis();
@@ -2048,6 +2519,7 @@ async function publishApi() {
 }
 
 async function disableApi() {
+  assertCurrentApiPermission("publish");
   if (!state.current || !state.current.id) return;
   const api = await request(`/admin/apis/${state.current.id}/disable`, { method: "POST", body: "{}" });
   fillForm(api);
@@ -2216,7 +2688,34 @@ function setupHelp() {
   });
 }
 
+function setupSecurity() {
+  els.authOpenBtn.addEventListener("click", () => openAuthModal());
+  els.authCloseBtn.addEventListener("click", closeAuthModal);
+  els.authLoginTabBtn.addEventListener("click", () => setAuthMode("login"));
+  els.authRegisterTabBtn.addEventListener("click", () => setAuthMode("register"));
+  els.authTotpTabBtn.addEventListener("click", () => setAuthMode("totp"));
+  els.authPasswordTabBtn.addEventListener("click", () => setAuthMode("password"));
+  els.authLogoutTabBtn.addEventListener("click", () => runEditorAction(logout));
+  els.loginForm.addEventListener("submit", (event) => runEditorAction(() => submitLogin(event)));
+  els.registerForm.addEventListener("submit", (event) => runEditorAction(() => submitRegister(event)));
+  els.totpBeginBtn.addEventListener("click", () => runEditorAction(beginTotpBind));
+  els.totpSecretCopyBtn.addEventListener("click", () => runEditorAction(() => copyText(els.totpSecretValue.textContent)));
+  els.totpUrlCopyBtn.addEventListener("click", () => runEditorAction(() => copyText(els.totpUrlValue.textContent)));
+  els.totpConfirmBtn.addEventListener("click", () => runEditorAction(confirmTotpBind));
+  els.passwordForm.addEventListener("submit", (event) => runEditorAction(() => submitPasswordChange(event)));
+  bindCapsLockWarning([els.loginPasswordInput], els.loginCapsLockWarning);
+  bindCapsLockWarning([els.registerPasswordInput, els.registerPasswordConfirmInput], els.registerCapsLockWarning);
+  bindCapsLockWarning([els.oldPasswordInput, els.newPasswordInput, els.newPasswordConfirmInput], els.passwordCapsLockWarning);
+  els.securityOpenBtn.addEventListener("click", () => {
+    window.location.href = getLocalPageUrl("/security.html");
+  });
+}
+
 els.newApiBtn.addEventListener("click", () => {
+  if (!canCreateApi()) {
+    showToast(permissionDeniedMessage("edit"), "error");
+    return;
+  }
   fillForm({
     name: "",
     path: "/api/",
@@ -2288,6 +2787,7 @@ setupHelp();
 setupTags();
 setupCapabilityModal();
 setupApiInfoCollapse();
+setupSecurity();
 setupEditorContextMenuLifecycle();
 
 bind(els.saveBtn, saveApi);
@@ -2297,6 +2797,21 @@ bind(els.abortSqlBtn, () => abortTestRun("sql"));
 bind(els.runScriptBtn, runScriptTest);
 bind(els.abortScriptBtn, () => abortTestRun("script"));
 
-Promise.all([loadDatabaseSources(), loadTags()])
-  .then(() => loadApis())
-  .catch((error) => showStatus(`加载失败: ${error.message}`));
+async function bootstrap() {
+  renderAuthState();
+  const user = await refreshCurrentUser({ clearOnFailure: true });
+  if (!user) {
+    showStatus("请先登录后继续操作");
+    openAuthModal("login");
+    return;
+  }
+  try {
+    await loadInitialAdminData();
+  } catch (error) {
+    const message = error.statusCode === 401 ? "请先登录后继续操作" : `加载失败: ${error.message}`;
+    showStatus(message);
+    if (error.statusCode === 401) openAuthModal("login");
+  }
+}
+
+bootstrap();

@@ -88,6 +88,9 @@ test("runScript exposes safe context fields including scriptType", async () => {
     requestId: "req-1",
     userId: 7,
     roles: ["admin"],
+    username: null,
+    displayName: "",
+    authType: null,
     callDepth: 2,
     callChain: ["/api/a", "/api/b"],
     scriptType: "params"

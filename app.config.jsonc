@@ -20,6 +20,34 @@
   "runtime": {
     // callApi 内部调用最大深度，防止循环或过深调用链。
     "maxCallDepth": 5,
+    "sqlExecution": {
+      "businessPool": {
+        "mysql": {
+          // 业务 MySQL 数据源连接池上限；每个数据源 alias 单独一个池。
+          "connectionLimit": 10,
+          "queueLimit": 0,
+          "connectTimeoutMs": 10000
+        },
+        "mssql": {
+          // 业务 MSSQL 数据源连接池上限；每个数据源 alias 单独一个池。
+          "max": 10,
+          "min": 0,
+          "idleTimeoutMillis": 30000
+        }
+      },
+      "datasourceConcurrency": {
+        "default": {
+          // 每个数据源同时执行 SQL 的请求数；超过后进入短队列，避免压垮业务库。
+          "enabled": true,
+          "max": 10,
+          "queueLimit": 100,
+          "queueTimeoutMs": 3000
+        },
+        "sources": {
+          // "erp": { "max": 5, "queueLimit": 50, "queueTimeoutMs": 3000 }
+        }
+      }
+    },
     "scriptWorker": {
       // JS Worker 内存限制，保护主进程；大结果集场景可适当调高。
       "maxOldGenerationSizeMb": 32,
@@ -38,5 +66,19 @@
       "allowedHosts": [],
       "allowPrivateNetwork": false
     }
+  },
+
+  "security": {
+    // 第一版默认关闭强制鉴权；改为 true 后，动态 API 会要求 Bearer token 和用户到 API 授权。
+    //授权页 IP 白名单只在 security.enabled = true 时生效
+    "enabled": true,
+    // 生产环境必须改成高强度随机值，用于加密 Authenticator Secret。
+    "secretKey": "change-this-security-secret",
+    "tokenTtlSeconds": 28800,
+    "totpIssuer": "SQL API",
+    // 只有来自这些可信代理的请求，才会信任 X-Forwarded-For / X-Real-IP。
+    "trustedProxies": ["127.0.0.1", "::1"],
+    // true 表示授权管理接口必须命中 adata_security_admin_ip_whitelist。
+    "adminIpWhitelistRequired": true
   }
 }

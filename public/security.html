@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>安全管理 - SQL API</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <main class="security-page">
+      <header class="toolbar security-page-toolbar">
+        <div>
+          <h1>安全管理</h1>
+          <p id="securityStatusText">加载安全配置</p>
+        </div>
+        <div class="actions">
+          <span id="securityCurrentUser" class="code-language">未登录</span>
+          <button id="backToAdminBtn" type="button">返回接口管理</button>
+        </div>
+      </header>
+      <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+      <section class="security-page-content">
+        <div id="securityGateMessage" class="auth-message hidden"></div>
+        <div class="security-tabs">
+          <button type="button" class="active" data-security-tab="users">用户</button>
+          <button type="button" data-security-tab="permissions">API 授权</button>
+          <button type="button" data-security-tab="developers">API 开发</button>
+          <button type="button" data-security-tab="apiIp">API IP</button>
+          <button type="button" data-security-tab="adminIp">授权页 IP</button>
+          <button type="button" data-security-tab="audit">审计</button>
+        </div>
+
+        <section id="securityUsersPanel" class="security-panel">
+          <div class="security-toolbar">
+            <button id="securityRefreshUsersBtn" type="button">刷新用户</button>
+          </div>
+          <div id="securityUsersList" class="security-table"></div>
+        </section>
+
+        <section id="securityPermissionsPanel" class="security-panel hidden">
+          <div class="security-split">
+            <label>用户<select id="permissionUserSelect"></select></label>
+            <label>筛选 API<input id="permissionApiFilterInput" placeholder="按名称或路径过滤"></label>
+          </div>
+          <div id="permissionApiList" class="security-check-list"></div>
+          <div class="security-toolbar">
+            <button id="permissionSaveBtn" type="button" class="primary">保存授权</button>
+          </div>
+        </section>
+
+        <section id="securityDevelopersPanel" class="security-panel hidden">
+          <div class="security-split">
+            <label>用户<select id="developerUserSelect"></select></label>
+            <label>筛选 API<input id="developerApiFilterInput" placeholder="按名称或路径过滤"></label>
+          </div>
+          <div id="developerApiList" class="security-check-list"></div>
+          <div class="security-toolbar">
+            <button id="developerSaveBtn" type="button" class="primary">保存开发权限</button>
+          </div>
+        </section>
+
+        <section id="securityApiIpPanel" class="security-panel hidden">
+          <div class="security-split">
+            <label>API<select id="apiIpApiSelect"></select></label>
+            <button id="apiIpLoadBtn" type="button">读取白名单</button>
+          </div>
+          <label>IP 规则<textarea id="apiIpRulesInput" rows="8" placeholder="每行一条，例如 192.168.1.10 或 10.0.0.0/24"></textarea></label>
+          <div class="security-toolbar">
+            <button id="apiIpSaveBtn" type="button" class="primary">保存 API IP 白名单</button>
+          </div>
+        </section>
+
+        <section id="securityAdminIpPanel" class="security-panel hidden">
+          <label>授权管理入口 IP 规则<textarea id="adminIpRulesInput" rows="8" placeholder="每行一条，例如 192.168.1.10 或 10.0.0.0/24"></textarea></label>
+          <div class="security-toolbar">
+            <button id="adminIpLoadBtn" type="button">读取白名单</button>
+            <button id="adminIpSaveBtn" type="button" class="primary">保存授权页 IP 白名单</button>
+          </div>
+        </section>
+
+        <section id="securityAuditPanel" class="security-panel hidden">
+          <div class="security-toolbar">
+            <button id="auditRefreshBtn" type="button">刷新审计日志</button>
+          </div>
+          <div id="auditLogList" class="security-table"></div>
+        </section>
+      </section>
+    </main>
+
+    <script src="security.js"></script>
+  </body>
+</html>

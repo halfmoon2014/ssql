@@ -53,6 +53,9 @@ function buildSafeContext(context) {
     requestId: context.requestId,
     userId: context.userId || null,
     roles: Array.isArray(context.roles) ? context.roles : [],
+    username: context.username || null,
+    displayName: context.displayName || "",
+    authType: context.authType || null,
     callDepth: context.callDepth || 0,
     callChain: Array.isArray(context.callChain) ? context.callChain : [],
     scriptType: context.scriptType || null

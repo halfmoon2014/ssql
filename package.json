@@ -15,6 +15,7 @@
     "mssql": "^12.7.0",
     "mysql2": "^3.11.5",
     "prettier": "^3.9.6",
+    "qrcode": "^1.5.4",
     "sql-formatter": "^15.8.2",
     "xml-formatter": "^3.7.0"
   }

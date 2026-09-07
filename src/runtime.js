@@ -79,10 +79,20 @@ function normalizeCallApiMethod(options) {
   return method || null;
 }
 
+function buildAuthContext(options) {
+  const user = options.securityUser || {};
+  return {
+    username: options.username || user.username || null,
+    displayName: options.displayName || user.displayName || "",
+    authType: options.authType || (options.securityUser ? "user_token" : null)
+  };
+}
+
 class ApiRuntime {
-  constructor({ store, config }) {
+  constructor({ store, config, security = null }) {
     this.store = store;
     this.config = config;
+    this.security = security;
   }
 
   async executeById(id, options = {}) {
@@ -100,16 +110,29 @@ class ApiRuntime {
   async executeCallApi(apiPath, params, callOptions, runtimeOptions) {
     const requestedMethod = normalizeCallApiMethod(callOptions);
     if (requestedMethod) {
-      return this.executeByPath(apiPath, requestedMethod, runtimeOptions).then((response) => response.data);
+      return this.executeCallApiWithMethod(apiPath, requestedMethod, runtimeOptions).then((response) => response.data);
     }
 
     try {
-      return await this.executeByPath(apiPath, "POST", runtimeOptions).then((response) => response.data);
+      return await this.executeCallApiWithMethod(apiPath, "POST", runtimeOptions).then((response) => response.data);
     } catch (error) {
       // 未显式传 method 的内部调用兜底：先按历史 POST 查找，再尝试常见 GET。
       if (error.statusCode !== 404) throw error;
-      return this.executeByPath(apiPath, "GET", runtimeOptions).then((response) => response.data);
+      return this.executeCallApiWithMethod(apiPath, "GET", runtimeOptions).then((response) => response.data);
     }
+  }
+
+  async executeCallApiWithMethod(apiPath, method, runtimeOptions = {}) {
+    const api = await this.store.findByPathAndMethod(apiPath, method);
+    if (!api) throw new AppError(404, "api not found");
+    if (typeof runtimeOptions.authorizeCallApi === "function") {
+      // 管理端测试允许调用草稿 API，但不能借 callApi 绕过目标 API 的开发测试权限。
+      await runtimeOptions.authorizeCallApi(api, { apiPath, method });
+    }
+    return this.executeApi(api, {
+      ...runtimeOptions,
+      method
+    });
   }
 
   executeScriptCapability(api, context, name, args) {
@@ -138,6 +161,7 @@ class ApiRuntime {
     const callChain = Array.isArray(options.callChain) ? [...options.callChain] : [];
     const nextCallChain = Array.isArray(options.nextCallChain) ? [...options.nextCallChain] : [...callChain, api.id];
     const allowDraft = Boolean(options.allowDraft);
+    const authContext = buildAuthContext(options);
     const paramScriptResult = await runScript({
       script: api.paramScriptText,
       params,
@@ -147,6 +171,9 @@ class ApiRuntime {
         requestId,
         userId: options.userId,
         roles: options.roles || [],
+        username: authContext.username,
+        displayName: authContext.displayName,
+        authType: authContext.authType,
         callDepth: nextCallChain.length - 1,
         callChain: Array.isArray(options.debugCallChain) ? options.debugCallChain : [...callChain, api.path],
         scriptType: "params"
@@ -159,6 +186,9 @@ class ApiRuntime {
         requestId,
         userId: options.userId,
         roles: options.roles || [],
+        username: authContext.username,
+        displayName: authContext.displayName,
+        authType: authContext.authType,
         callDepth: nextCallChain.length - 1,
         callChain: Array.isArray(options.debugCallChain) ? options.debugCallChain : [...callChain, api.path],
         scriptType: "params"
@@ -172,7 +202,14 @@ class ApiRuntime {
           callChain: nextCallChain,
           allowDraft,
           userId: options.userId,
-          roles: options.roles || []
+          roles: options.roles || [],
+          username: authContext.username,
+          displayName: authContext.displayName,
+          authType: authContext.authType,
+          securityUser: options.securityUser,
+          clientIp: options.clientIp,
+          userAgent: options.userAgent,
+          authorizeCallApi: options.authorizeCallApi
         });
       }
     });
@@ -228,10 +265,17 @@ class ApiRuntime {
 
     let caughtError = null;
     try {
+      if (this.security && !allowDraft) {
+        await this.security.assertApiAccessForUser(options.securityUser, api, {
+          clientIp: options.clientIp,
+          userAgent: options.userAgent
+        });
+      }
       let params = buildParams(api.requestParams, options.params || {});
       debug.params = params;
 
       if (hasScript(api.paramScriptText)) {
+        const authContext = buildAuthContext(options);
         const applied = await this.runParamScript(api, params, {
           requestId,
           headers: options.headers || {},
@@ -240,7 +284,13 @@ class ApiRuntime {
           debugCallChain: debug.callChain,
           allowDraft,
           userId: options.userId,
-          roles: options.roles || []
+          roles: options.roles || [],
+          username: authContext.username,
+          displayName: authContext.displayName,
+          authType: authContext.authType,
+          securityUser: options.securityUser,
+          clientIp: options.clientIp,
+          userAgent: options.userAgent
         });
         debug.paramScriptResult = applied.paramScriptResult;
         if (applied.directReturn) {
@@ -275,6 +325,7 @@ class ApiRuntime {
       const rows = sqlResult.rows;
       debug.sqlRows = rows;
       debug.sqlResultSets = sqlResult.resultSets || [];
+      const authContext = buildAuthContext(options);
 
       const result = await runScript({
         script: api.scriptText,
@@ -286,6 +337,9 @@ class ApiRuntime {
           requestId,
           userId: options.userId,
           roles: options.roles || [],
+          username: authContext.username,
+          displayName: authContext.displayName,
+          authType: authContext.authType,
           callDepth: nextCallChain.length - 1,
           callChain: debug.callChain,
           scriptType: "result"
@@ -311,7 +365,14 @@ class ApiRuntime {
             callChain: nextCallChain,
             allowDraft,
             userId: options.userId,
-            roles: options.roles || []
+            roles: options.roles || [],
+            username: authContext.username,
+            displayName: authContext.displayName,
+            authType: authContext.authType,
+            securityUser: options.securityUser,
+            clientIp: options.clientIp,
+            userAgent: options.userAgent,
+            authorizeCallApi: options.authorizeCallApi
           });
         }
       });

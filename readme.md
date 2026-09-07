@@ -2,7 +2,14 @@
 
 安装和启动说明见 [INSTALL.md](./INSTALL.md)。
 
+安全认证和授权方案见:
+
+- [用户认证、Authenticator 和 API 授权设计文档](./docs/security/AUTH_DESIGN.md)
+- [用户认证、Authenticator 和 API 授权操作文档](./docs/security/AUTH_OPERATION.md)
+
 当前实现中，API 配置和 API 调用日志保存到 `database.config.json` 中的 MySQL 数据源；业务查询数据源可按别名选择 MySQL 或 MSSQL；`data/server.log` 只保存服务端运行日志；每次动态 API 执行的调试快照保存到 `data/api-debug/`。
+
+安全认证授权后端模块已放在 `src/security/`，当前提供用户注册、登录、Google Authenticator 绑定、Bearer token 会话、用户到 API 授权、授权入口 IP 白名单、API 调用 IP 白名单和安全审计表。`app.config.jsonc` 中 `security.enabled` 默认为 `false`；改为 `true` 后会强制动态 API 和普通管理接口走安全校验。
 
 ## 数据库配置 Demo
 

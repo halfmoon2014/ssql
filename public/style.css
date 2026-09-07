@@ -339,6 +339,31 @@ input[type="checkbox"] {
   box-shadow: 0 16px 42px rgba(23, 32, 38, 0.22);
 }
 
+.security-auth-modal {
+  width: min(520px, 100%);
+}
+
+.security-modal {
+  width: min(980px, 100%);
+}
+
+.security-page {
+  min-height: 100vh;
+  background: #f3f6f8;
+}
+
+.toolbar.security-page-toolbar {
+  margin: 0;
+}
+
+.security-page-content {
+  display: grid;
+  gap: 12px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
 .modal-header,
 .modal-actions {
   display: flex;
@@ -361,6 +386,212 @@ input[type="checkbox"] {
   display: grid;
   gap: 8px;
   padding: 12px 14px;
+}
+
+.auth-body,
+.security-body {
+  gap: 12px;
+}
+
+.auth-message {
+  border: 1px solid #f0b4b4;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #a34242;
+  background: #fff2f2;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.auth-message.success {
+  border-color: #94d6c5;
+  color: #0f766e;
+  background: #ecfaf5;
+}
+
+.security-form {
+  display: grid;
+  gap: 10px;
+}
+
+.password-rule {
+  color: #62727f;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.caps-lock-warning {
+  border: 1px solid #f1c77a;
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: #8a5a00;
+  background: #fff7df;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.security-form label,
+.security-panel label {
+  margin-bottom: 0;
+}
+
+.secret-box {
+  overflow-wrap: anywhere;
+  border: 1px solid #d7dee6;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #40505c;
+  background: #f8fafb;
+  font-family: Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.secret-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.totp-qr-code {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 12px;
+  border-bottom: 1px solid #e7edf2;
+  margin-bottom: 8px;
+}
+
+.totp-qr-code svg {
+  width: 180px;
+  height: 180px;
+  max-width: 100%;
+  background: #fff;
+  border: 1px solid #d7dee6;
+  border-radius: 6px;
+}
+
+.secret-row + .secret-row {
+  margin-top: 8px;
+  border-top: 1px solid #e7edf2;
+  padding-top: 8px;
+}
+
+.secret-label {
+  color: #62727f;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.secret-row code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #172026;
+  font-family: Consolas, "Liberation Mono", monospace;
+  white-space: normal;
+}
+
+.security-tabs,
+.security-toolbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.security-tabs {
+  border-bottom: 1px solid #d7dee6;
+  padding-bottom: 8px;
+}
+
+.security-tabs button.active {
+  border-color: #1f6f78;
+  color: #fff;
+  background: #1f6f78;
+}
+
+.security-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.security-split {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(260px, 1.2fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.security-table,
+.security-check-list {
+  display: grid;
+  gap: 6px;
+  max-height: 420px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.security-row,
+.security-check-row {
+  display: grid;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #d7dee6;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.security-row {
+  grid-template-columns: minmax(150px, 1.2fr) minmax(130px, 0.8fr) auto auto auto auto auto;
+}
+
+.audit-row {
+  grid-template-columns: minmax(150px, 0.8fr) minmax(120px, 0.6fr) minmax(180px, 1fr) minmax(160px, 1fr);
+}
+
+.security-check-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.developer-permission-row {
+  grid-template-columns: minmax(150px, 1fr) minmax(160px, 1fr) auto auto auto;
+}
+
+.security-main-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.security-sub-text {
+  color: #62727f;
+  font-size: 12px;
+}
+
+.security-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #52616d;
+  background: #eef3f6;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.security-badge.enabled {
+  color: #0f766e;
+  background: #dcf4ee;
+}
+
+.security-badge.denied {
+  color: #a34242;
+  background: #f8e6e6;
 }
 
 .modal-actions {
@@ -442,6 +673,14 @@ input[type="checkbox"] {
   color: #62727f;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#currentUserInfo {
+  padding-top: 7px;
+}
+
+#securityCurrentUser {
+  padding-top: 7px;
 }
 
 .actions {
@@ -921,5 +1160,34 @@ textarea.code {
   .tag-field.half-span {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .security-modal {
+    width: min(96vw, 720px);
+  }
+
+  .security-split,
+  .security-row,
+  .audit-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .security-check-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .security-check-row .security-badge {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .secret-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .secret-label,
+  .secret-row code {
+    grid-column: 1 / -1;
   }
 }

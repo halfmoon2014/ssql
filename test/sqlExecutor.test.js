@@ -1,10 +1,13 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const mysql = require("mysql2/promise");
 const {
+  closeBusinessSqlPools,
   compileNamedParams,
   executeSqlWithFields,
   extractMyBatisSelectSql,
   evaluateMyBatisTest,
+  getBusinessSqlPoolStats,
   normalizeMysqlResultSets,
   normalizeSqlMode,
   normalizeSqlText,
@@ -13,6 +16,24 @@ const {
 
 function compactSql(value) {
   return String(value).replace(/\s+/g, " ").trim();
+}
+
+function waitFor(predicate) {
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    function poll() {
+      if (predicate()) {
+        resolve();
+        return;
+      }
+      if (Date.now() - startedAt > 500) {
+        reject(new Error("condition timeout"));
+        return;
+      }
+      setTimeout(poll, 5);
+    }
+    poll();
+  });
 }
 
 test("compileNamedParams keeps colon params unchanged", () => {
@@ -262,4 +283,136 @@ test("executeSqlWithFields exits early when signal is already aborted", async ()
     }, {}, null, { signal: controller.signal }),
     (error) => error.statusCode === 499 && error.message === "sql test aborted"
   );
+});
+
+test("executeSqlWithFields reuses mysql business pool by datasource", async () => {
+  const originalCreatePool = mysql.createPool;
+  let createPoolCount = 0;
+  let queryCount = 0;
+  const poolOptions = [];
+  const connection = {
+    query: async () => {
+      queryCount += 1;
+      return [[{ id: queryCount }], [{ name: "id" }]];
+    },
+    release() {},
+    destroy() {}
+  };
+
+  mysql.createPool = (options) => {
+    createPoolCount += 1;
+    poolOptions.push(options);
+    return {
+      getConnection: async () => connection,
+      end: async () => {}
+    };
+  };
+
+  try {
+    const config = {
+      defaultAlias: "default",
+      sources: [{
+        alias: "default",
+        type: "mysql",
+        host: "127.0.0.1",
+        user: "root",
+        database: "app"
+      }],
+      sqlExecution: {
+        businessPool: {
+          mysql: {
+            connectionLimit: 2,
+            queueLimit: 0,
+            connectTimeoutMs: 2000
+          }
+        },
+        datasourceConcurrency: {
+          default: {
+            enabled: true,
+            max: 2,
+            queueLimit: 1,
+            queueTimeoutMs: 100
+          },
+          sources: {}
+        }
+      }
+    };
+    const api = {
+      databaseAlias: "default",
+      sqlMode: "sql",
+      sqlText: "select #{id} as id",
+      sqlTimeoutMs: 100
+    };
+
+    const first = await executeSqlWithFields(config, api, { id: 1 });
+    const second = await executeSqlWithFields(config, api, { id: 2 });
+
+    assert.equal(createPoolCount, 1);
+    assert.equal(poolOptions[0].connectionLimit, 2);
+    assert.deepEqual(first.rows, [{ id: 1 }]);
+    assert.deepEqual(second.rows, [{ id: 2 }]);
+  } finally {
+    await closeBusinessSqlPools();
+    mysql.createPool = originalCreatePool;
+  }
+});
+
+test("executeSqlWithFields applies datasource concurrency queue limit", async () => {
+  const originalCreatePool = mysql.createPool;
+  let unblockQuery = null;
+  const connection = {
+    query: async () => new Promise((resolve) => {
+      unblockQuery = () => resolve([[{ ok: true }], [{ name: "ok" }]]);
+    }),
+    release() {},
+    destroy() {}
+  };
+
+  mysql.createPool = () => ({
+    getConnection: async () => connection,
+    end: async () => {}
+  });
+
+  try {
+    const config = {
+      defaultAlias: "default",
+      sources: [{
+        alias: "default",
+        type: "mysql",
+        host: "127.0.0.1",
+        user: "root",
+        database: "app"
+      }],
+      sqlExecution: {
+        datasourceConcurrency: {
+          default: {
+            enabled: true,
+            max: 1,
+            queueLimit: 0,
+            queueTimeoutMs: 100
+          },
+          sources: {}
+        }
+      }
+    };
+    const api = {
+      databaseAlias: "default",
+      sqlMode: "sql",
+      sqlText: "select 1",
+      sqlTimeoutMs: 100
+    };
+
+    const first = executeSqlWithFields(config, api, {});
+    await waitFor(() => getBusinessSqlPoolStats().datasourceLimiters[0]?.active === 1 && unblockQuery);
+    await assert.rejects(
+      () => executeSqlWithFields(config, api, {}),
+      (error) => error.statusCode === 429 && error.message === "too many sql requests"
+    );
+
+    unblockQuery();
+    await first;
+  } finally {
+    await closeBusinessSqlPools();
+    mysql.createPool = originalCreatePool;
+  }
 });

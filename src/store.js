@@ -420,6 +420,7 @@ class Store {
     const name = String(options.name || "").trim();
     const sql = String(options.sql || "").trim();
     const tagIds = normalizeTagIds(options.tagIds || options.tags);
+    const developerUserId = options.developerUserId === undefined ? null : Number(options.developerUserId);
     const where = ["deleted_at is null"];
     const params = [];
 
@@ -443,6 +444,16 @@ class Store {
         having count(distinct tag_id) = ?
       )`);
       params.push(...tagIds, tagIds.length);
+    }
+
+    if (developerUserId !== null && Number.isFinite(developerUserId)) {
+      where.push(`id in (
+        select api_id
+        from adata_security_api_developers
+        where user_id = ? and revoked_at is null
+          and (can_edit = 1 or can_test = 1 or can_publish = 1)
+      )`);
+      params.push(developerUserId);
     }
 
     const whereSql = where.join(" and ");

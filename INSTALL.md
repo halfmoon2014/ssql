@@ -77,6 +77,12 @@ npm install
 - `adata_tags`: 保存后台管理端可选标签。
 - `adata_api_tags`: 保存 API 与标签的多对多关联。
 - `adata_api_call_logs`: 保存动态 API 调用日志。
+- `adata_security_users`: 保存用户、Authenticator 绑定状态和管理权限字段。
+- `adata_security_user_sessions`: 保存登录会话 token 哈希和过期时间。
+- `adata_security_user_api_permissions`: 保存“用户 -> API”执行授权。
+- `adata_security_api_ip_whitelist`: 保存每个 API 的调用 IP 白名单。
+- `adata_security_admin_ip_whitelist`: 保存授权管理入口 IP 白名单。
+- `adata_security_audit_logs`: 保存登录、授权、IP 拒绝等安全审计日志。
 
 旧版本如果已经存在 `data/apis.json`，服务首次启动且数据库表为空时，会自动把里面的 API 配置迁移到 MySQL。
 
@@ -108,9 +114,19 @@ http://127.0.0.1:3010
       "maxOldGenerationSizeMb": 32,
       "maxYoungGenerationSizeMb": 8
     }
+  },
+  "security": {
+    "enabled": false,
+    "secretKey": "change-this-security-secret",
+    "tokenTtlSeconds": 28800,
+    "totpIssuer": "SQL API",
+    "trustedProxies": ["127.0.0.1", "::1"],
+    "adminIpWhitelistRequired": false
   }
 }
 ```
+
+`security.enabled` 默认为 `false`，用于先部署安全接口和数据表。改为 `true` 后，动态 API 会要求 `Authorization: Bearer <token>`，并校验“用户 -> API 权限”；普通 `/admin/*` 管理接口也会要求管理员 token。
 
 ## 5. 修改端口
 

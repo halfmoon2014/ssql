@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { applyParamScriptResult, normalizeCallApiMethod } = require("../src/runtime");
+const { ApiRuntime, applyParamScriptResult, normalizeCallApiMethod } = require("../src/runtime");
 
 test("applyParamScriptResult accepts object return value as processed params", () => {
   const currentParams = { id: "7" };
@@ -40,4 +40,34 @@ test("normalizeCallApiMethod accepts options object and method string", () => {
   assert.equal(normalizeCallApiMethod({ method: "get" }), "GET");
   assert.equal(normalizeCallApiMethod("post"), "POST");
   assert.equal(normalizeCallApiMethod({}), null);
+});
+
+test("executeCallApi authorizes resolved target api before execution", async () => {
+  const calls = [];
+  const runtime = new ApiRuntime({
+    config: {},
+    store: {
+      async findByPathAndMethod(apiPath, method) {
+        calls.push({ type: "find", apiPath, method });
+        return { id: "api-2", path: apiPath, method, status: "draft" };
+      }
+    }
+  });
+  runtime.executeApi = async (api, options) => {
+    calls.push({ type: "execute", apiId: api.id, method: options.method });
+    return { data: { ok: true } };
+  };
+
+  const result = await runtime.executeCallApi("/api/target", {}, { method: "get" }, {
+    async authorizeCallApi(api, context) {
+      calls.push({ type: "authorize", apiId: api.id, method: context.method });
+    }
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(calls, [
+    { type: "find", apiPath: "/api/target", method: "GET" },
+    { type: "authorize", apiId: "api-2", method: "GET" },
+    { type: "execute", apiId: "api-2", method: "GET" }
+  ]);
 });

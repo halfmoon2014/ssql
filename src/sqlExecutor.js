@@ -1,10 +1,14 @@
 const mysql = require("mysql2/promise");
 const { AppError } = require("./errors");
+const { ConcurrencyLimiter } = require("./concurrencyLimiter");
 
 const blockedWords = /\b(truncate|alter|grant|revoke|use|load_file|outfile|infile)\b/i;
 const supportedMyBatisTags = new Set(["if", "where", "foreach", "choose", "when", "otherwise"]);
 const unsupportedMyBatisTagPattern = /<\s*(set|trim|include|bind)\b/i;
 const unsafeMybatisParamPattern = /\$\{\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\}/;
+const mysqlBusinessPools = new Map();
+const mssqlBusinessPools = new Map();
+const datasourceLimiters = new Map();
 
 function decodeXmlEntities(value) {
   return String(value)
@@ -523,8 +527,148 @@ function resolveDatabaseSource(config, api = {}) {
 
 function toMysqlConnectionOptions(source) {
   // 数据源元信息只参与路由和日志，不传入 mysql2。
-  const { alias, type, server, options, ...connectionOptions } = source;
+  const { alias, type, server, options, pool, concurrency, ...connectionOptions } = source;
   return connectionOptions;
+}
+
+function toPositiveInteger(value, fallback) {
+  const number = value === undefined || value === null || value === "" ? Number(fallback) : Number(value);
+  if (!Number.isFinite(number) || number < 1) return Number(fallback);
+  return Math.floor(number);
+}
+
+function toNonNegativeInteger(value, fallback) {
+  const number = value === undefined || value === null || value === "" ? Number(fallback) : Number(value);
+  if (!Number.isFinite(number) || number < 0) return Number(fallback);
+  return Math.floor(number);
+}
+
+function getSqlExecutionConfig(config) {
+  return config.sqlExecution || {};
+}
+
+function getMysqlPoolConfig(config, source) {
+  const poolConfig = getSqlExecutionConfig(config).businessPool?.mysql || {};
+  const sourcePool = source.pool && typeof source.pool === "object" ? source.pool : {};
+  return {
+    waitForConnections: sourcePool.waitForConnections ?? poolConfig.waitForConnections ?? true,
+    connectionLimit: toPositiveInteger(sourcePool.connectionLimit, poolConfig.connectionLimit || 10),
+    queueLimit: toNonNegativeInteger(sourcePool.queueLimit, poolConfig.queueLimit ?? 0),
+    connectTimeoutMs: toPositiveInteger(sourcePool.connectTimeoutMs || source.connectTimeout, poolConfig.connectTimeoutMs || 10000)
+  };
+}
+
+function getMssqlPoolConfig(config, source) {
+  const poolConfig = getSqlExecutionConfig(config).businessPool?.mssql || {};
+  const sourcePool = source.pool && typeof source.pool === "object" ? source.pool : {};
+  return {
+    max: toPositiveInteger(sourcePool.max, poolConfig.max || 10),
+    min: toNonNegativeInteger(sourcePool.min, poolConfig.min || 0),
+    idleTimeoutMillis: toPositiveInteger(sourcePool.idleTimeoutMillis, poolConfig.idleTimeoutMillis || 30000)
+  };
+}
+
+function getDatasourceConcurrencyConfig(config, source) {
+  const execution = getSqlExecutionConfig(config);
+  const defaultConfig = execution.datasourceConcurrency?.default || {
+    enabled: true,
+    max: 10,
+    queueLimit: 100,
+    queueTimeoutMs: 3000
+  };
+  const sourceConfig = execution.datasourceConcurrency?.sources?.[source.alias] || source.concurrency || {};
+  return {
+    enabled: sourceConfig.enabled ?? defaultConfig.enabled ?? true,
+    max: toPositiveInteger(sourceConfig.max, defaultConfig.max || 10),
+    queueLimit: toNonNegativeInteger(sourceConfig.queueLimit, defaultConfig.queueLimit ?? 100),
+    queueTimeoutMs: toNonNegativeInteger(sourceConfig.queueTimeoutMs, defaultConfig.queueTimeoutMs ?? 3000)
+  };
+}
+
+function getDatasourceLimiter(config, source) {
+  const limiterConfig = getDatasourceConcurrencyConfig(config, source);
+  const key = `${source.type}:${source.alias}`;
+  const existing = datasourceLimiters.get(key);
+  if (existing && JSON.stringify(existing.config) === JSON.stringify(limiterConfig)) return existing.limiter;
+
+  const limiter = new ConcurrencyLimiter({
+    name: `datasource:${source.alias}`,
+    ...limiterConfig
+  });
+  datasourceLimiters.set(key, {
+    config: limiterConfig,
+    limiter
+  });
+  return limiter;
+}
+
+function getMysqlPool(config, source) {
+  const poolConfig = getMysqlPoolConfig(config, source);
+  const key = `${source.alias}:${source.host || ""}:${source.port || ""}:${source.database || ""}`;
+  const existing = mysqlBusinessPools.get(key);
+  if (existing) return existing;
+
+  const pool = mysql.createPool({
+    ...toMysqlConnectionOptions(source),
+    multipleStatements: true,
+    waitForConnections: poolConfig.waitForConnections,
+    connectionLimit: poolConfig.connectionLimit,
+    queueLimit: poolConfig.queueLimit,
+    connectTimeout: poolConfig.connectTimeoutMs
+  });
+  mysqlBusinessPools.set(key, pool);
+  return pool;
+}
+
+function getMssqlPoolKey(source) {
+  return `${source.alias}:${source.server || source.host || ""}:${source.port || ""}:${source.database || ""}`;
+}
+
+function getMssqlPoolEntry(config, source) {
+  const key = getMssqlPoolKey(source);
+  const existing = mssqlBusinessPools.get(key);
+  if (existing) return existing;
+
+  let mssql = null;
+  try {
+    mssql = require("mssql");
+  } catch (error) {
+    throw new AppError(500, "mssql driver is not installed", { reason: "run npm install mssql" });
+  }
+
+  const pool = new mssql.ConnectionPool({
+    server: source.server || source.host,
+    port: source.port ? Number(source.port) : undefined,
+    user: source.user,
+    password: source.password,
+    database: source.database,
+    options: {
+      encrypt: false,
+      trustServerCertificate: true,
+      ...(source.options || {})
+    },
+    pool: getMssqlPoolConfig(config, source)
+  });
+  const entry = {
+    key,
+    pool,
+    connectPromise: null
+  };
+  mssqlBusinessPools.set(key, entry);
+  return entry;
+}
+
+async function getConnectedMssqlPool(config, source) {
+  const entry = getMssqlPoolEntry(config, source);
+  if (!entry.connectPromise) {
+    // 同一数据源的并发首批请求共用同一个连接初始化 Promise，避免重复建池。
+    entry.connectPromise = entry.pool.connect().catch(async (error) => {
+      mssqlBusinessPools.delete(entry.key);
+      await entry.pool.close().catch(() => {});
+      throw error;
+    });
+  }
+  return entry.connectPromise;
 }
 
 function fieldNames(fields) {
@@ -589,20 +733,18 @@ function throwIfAborted(signal, message = "sql test aborted") {
   if (signal?.aborted) throw new AppError(499, message);
 }
 
-async function executeMysql(source, api, prepared, options = {}) {
+async function executeMysql(config, source, api, prepared, options = {}) {
   throwIfAborted(options.signal);
-  const connection = await mysql.createConnection({
-    ...toMysqlConnectionOptions(source),
-    multipleStatements: true,
-    connectTimeout: api.sqlTimeoutMs || 5000
-  });
+  const pool = getMysqlPool(config, source);
+  let connection = null;
   let aborted = false;
   function abortQuery() {
     aborted = true;
-    connection.destroy();
+    if (connection) connection.destroy();
   }
 
   try {
+    connection = await pool.getConnection();
     if (options.signal) options.signal.addEventListener("abort", abortQuery, { once: true });
     throwIfAborted(options.signal);
     const [rows, fields] = await connection.query({
@@ -622,46 +764,26 @@ async function executeMysql(source, api, prepared, options = {}) {
     throw new AppError(500, "sql execute failed", { reason: error.message });
   } finally {
     if (options.signal) options.signal.removeEventListener("abort", abortQuery);
+    if (!connection) return;
     if (aborted || options.signal?.aborted) {
       connection.destroy();
     } else {
-      await connection.end();
+      connection.release();
     }
   }
 }
 
-async function executeMssql(source, api, prepared, options = {}) {
+async function executeMssql(config, source, api, prepared, options = {}) {
   throwIfAborted(options.signal);
-  let mssql = null;
-  try {
-    mssql = require("mssql");
-  } catch (error) {
-    throw new AppError(500, "mssql driver is not installed", { reason: "run npm install mssql" });
-  }
-
-  const pool = new mssql.ConnectionPool({
-    server: source.server || source.host,
-    port: source.port ? Number(source.port) : undefined,
-    user: source.user,
-    password: source.password,
-    database: source.database,
-    options: {
-      encrypt: false,
-      trustServerCertificate: true,
-      ...(source.options || {})
-    },
-    connectionTimeout: api.sqlTimeoutMs || 5000,
-    requestTimeout: api.sqlTimeoutMs || 5000
-  });
-
+  const pool = await getConnectedMssqlPool(config, source);
   let request = null;
   function abortQuery() {
     if (request) request.cancel();
   }
 
   try {
-    await pool.connect();
     request = pool.request();
+    request.timeout = api.sqlTimeoutMs || 5000;
     if (options.signal) options.signal.addEventListener("abort", abortQuery, { once: true });
     throwIfAborted(options.signal);
     for (const parameter of prepared.parameters || []) {
@@ -681,7 +803,6 @@ async function executeMssql(source, api, prepared, options = {}) {
     throw new AppError(500, "sql execute failed", { reason: error.message });
   } finally {
     if (options.signal) options.signal.removeEventListener("abort", abortQuery);
-    await pool.close();
   }
 }
 
@@ -691,9 +812,18 @@ async function executeSqlWithFields(config, api, params, preparedSql = null, opt
 
   // 安全校验和参数编译都在建立连接前完成，失败时不占用连接。
   const prepared = preparedSql || prepareSqlExecution(api, params, databaseType);
-  if (databaseType === "mysql") return executeMysql(source, api, prepared, options);
-  if (databaseType === "mssql") return executeMssql(source, api, prepared, options);
-  throw new AppError(500, `unsupported database type: ${databaseType}`);
+  const limiter = getDatasourceLimiter(config, source);
+  const release = await limiter.acquire({
+    signal: options.signal,
+    abortMessage: "sql test aborted"
+  });
+  try {
+    if (databaseType === "mysql") return await executeMysql(config, source, api, prepared, options);
+    if (databaseType === "mssql") return await executeMssql(config, source, api, prepared, options);
+    throw new AppError(500, `unsupported database type: ${databaseType}`);
+  } finally {
+    release();
+  }
 }
 
 async function executeSql(config, api, params) {
@@ -701,12 +831,34 @@ async function executeSql(config, api, params) {
   return result.rows;
 }
 
+async function closeBusinessSqlPools() {
+  const mysqlPools = [...mysqlBusinessPools.values()];
+  const mssqlPools = [...mssqlBusinessPools.values()].map((entry) => entry.pool);
+  mysqlBusinessPools.clear();
+  mssqlBusinessPools.clear();
+  datasourceLimiters.clear();
+  await Promise.allSettled([
+    ...mysqlPools.map((pool) => pool.end()),
+    ...mssqlPools.map((pool) => pool.close())
+  ]);
+}
+
+function getBusinessSqlPoolStats() {
+  return {
+    mysqlPools: mysqlBusinessPools.size,
+    mssqlPools: mssqlBusinessPools.size,
+    datasourceLimiters: [...datasourceLimiters.values()].map((entry) => entry.limiter.stats())
+  };
+}
+
 module.exports = {
+  closeBusinessSqlPools,
   compileNamedParams,
   executeSql,
   executeSqlWithFields,
   extractMyBatisSelectSql,
   evaluateMyBatisTest,
+  getBusinessSqlPoolStats,
   normalizeSqlMode,
   normalizeSqlText,
   normalizeMysqlResultSets,
