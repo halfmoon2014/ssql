@@ -1547,3 +1547,10 @@
 - 用户要求：API 开发者新建接口后默认可编辑、可测试，但去掉可发布。
 - 已修改 `src/server.js`：非系统管理员创建 API 后自动授予 `canEdit=true`、`canTest=true`、`canPublish=false`。
 - 已更新 `docs/security/FRONTEND_API_PERMISSIONS.md`：同步 `POST /admin/apis` 权限说明。
+
+### 说明登录 expiresAt 时间
+
+- 用户询问：`admin/security/login` 返回的 `expiresAt` 是什么时间。
+- 已核对 `src/security/tokenService.js`、`src/security/index.js`、`src/config.js` 和 `app.config.jsonc`。
+- 结论：`expiresAt` 是登录成功时的 token 过期时间，按 `Date.now() + tokenTtlSeconds` 计算，当前配置 `tokenTtlSeconds = 28800` 秒，即登录后 8 小时；响应值为 ISO UTC 时间。
+- 用户进一步确认：中国用户实际过期时间需要按北京时间理解；例如北京时间 2026-09-12 14:52:34 登录，返回 `2026-09-12T14:52:34.000Z` 对应北京时间 2026-09-12 22:52:34。
